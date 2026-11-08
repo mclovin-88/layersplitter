@@ -864,9 +864,8 @@ function renderTree() {
         mb.addEventListener("click", () => { n.merge = !n.merge; selectionChanged(); });
         tags.push(mb);
       }
-      const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (effHidden(n) || !usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
+      const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (!usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
         tw, cb, thumbFor(n), name, ...tags);
-      if (n.hidden) { const e = el("span", { class: "eye", title: "ปิดตาอยู่ใน Photoshop" }); e.innerHTML = ICON.eyeOff; row.append(e); }
       li.append(row);
       if (n.kind === "group" && (n.expanded || q)) li.append(build(n.children, depth + 1));
       ul.append(li);
