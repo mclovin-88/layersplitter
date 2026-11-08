@@ -1286,7 +1286,7 @@ function renderTree() {
 /* ---------- UI: settings ---------- */
 function renderOutInfo() {
   const d = doc(), st = settings();
-  if (!d) { $("#outInfo").textContent = "—"; $("#dpiHint").textContent = ""; return; }
+  if (!d) { $("#outInfo").textContent = "—"; $("#dpiHint").textContent = ""; $("#splitBtn").disabled = $("#previewBtn").disabled = true; ["#docHint", "#fxHint", "#adjHint", "#soHint"].forEach(id => $(id).replaceChildren()); return; }
   const W = Math.round(d.width * st.scale), H = Math.round(d.height * st.scale);
   $("#dpiHint").textContent = st.scale === 1 ? `ไฟล์ต้นฉบับ ${d.srcDpi || d.dpi} DPI · ${d.width}×${d.height} px` : `ขยาย ${st.scale.toFixed(2)}× จาก ${d.dpi} DPI → canvas ${W}×${H} px` + (st.scale > 1 ? " (ภาพอาจแตกถ้าต้นฉบับละเอียดไม่พอ)" : "");
   const p = plan(d);
@@ -1428,8 +1428,7 @@ $("#dlgClose").onclick = () => $("#dlg").close();
 $("#dlg").addEventListener("close", () => $("#dlgGrid").querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src)));
 
 if (typeof agPsd === "undefined" || typeof JSZip === "undefined") setStatus("โหลดไลบรารีไม่สำเร็จ ตรวจการเชื่อมต่ออินเทอร์เน็ตแล้วเปิดหน้านี้ใหม่", "bad");
-S.docs.push(sampleDoc()); S.active = 0;
-renderAll();
+renderAll();   // opens empty: the person picks or drops a file
 window.__ls = { S, plan, settings, addFiles };
 })();
 </script>
