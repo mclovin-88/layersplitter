@@ -50,6 +50,8 @@ header.top{display:flex;align-items:center;gap:12px;margin:0 auto 16px;max-width
 .logo svg{width:20px;height:20px}
 header h1{font:700 21px/1.1 var(--font-display);margin:0;letter-spacing:-.01em}
 header .spacer{flex:1}
+.disclaimer{flex:1;min-width:0;margin:0 0 0 8px;font-size:11.5px;line-height:1.5;color:var(--muted);text-wrap:pretty}
+@media (max-width:760px){header.top{flex-wrap:wrap}.disclaimer{flex-basis:100%;margin:0}}
 
 .btn{border:var(--sw) solid var(--stroke);background:var(--panel);border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:500}
 .btn:hover{background:var(--hover)}
@@ -220,6 +222,7 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
 <header class="top">
   <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/><path d="m2 17.5 10 5 10-5" opacity=".6"/></svg></div>
   <div><h1>Layer Splitter</h1></div>
+  <p class="disclaimer">รองรับเฉพาะ .psd และ .psb · ไฟล์ใหญ่มากจะถูกย่อขนาดลง · ไฟล์ CMYK สีอาจต่างจาก Photoshop เล็กน้อย · Layer Style และ Adjustment บางแบบยังไม่รองรับ · แนะนำ Chrome หรือ Edge</p>
   <input type="file" id="fileInput" accept=".psd,.psb,.ai" multiple hidden>
 </header>
 
