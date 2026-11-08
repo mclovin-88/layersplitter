@@ -278,6 +278,7 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
         <option value="300">300 (งานพิมพ์)</option>
       </select>
       <span class="hint" id="dpiHint"></span>
+      <div class="hint" id="docHint"></div>
     </div>
 
     <div class="field" id="soField">
@@ -390,7 +391,8 @@ async function soCanvas(n) {
   const so = n.so;
   if (so.canvas) return so.canvas;
   if (so.kind === "psd") {
-    const inner = agPsd.readPsd(so.data, { skipThumbnail: true });
+    const inner = readPsdAny(so.data, { skipThumbnail: true });
+    if (inner.colorMode === 4) cmykFixPsd(inner);
     let c = inner.canvas;
     if (!c || isBlank(c)) {
       const saved = [currentLinked, currentDocW, currentDocH]; currentLinked = inner.linkedFiles || []; currentDocW = inner.width; currentDocH = inner.height;
@@ -420,7 +422,7 @@ function buildNodes(children, parent) {
       adj: isGroup ? null : (L.adjustment || null), mask: L.mask || null,
       expanded: isGroup ? (L.opened !== false) : false, checked: false, children: [],
       so: isGroup ? null : soInfo(L), fx: false, effects: null, fxBad: [],
-      fill: L.fillOpacity == null ? 1 : L.fillOpacity, angle: currentAngle, docW: currentDocW, docH: currentDocH
+      fill: L.fillOpacity == null ? 1 : L.fillOpacity, angle: currentAngle, docW: currentDocW, docH: currentDocH, fxK: currentWorkScale
     };
     if (!isGroup && L.effects && !L.effects.disabled && fxAny(L.effects)) { n.fx = true; n.effects = L.effects; n.fxBad = fxUnsupported(L.effects); }
     if (isGroup) n.children = buildNodes(L.children, n);
@@ -499,7 +501,7 @@ function drawCustomBlend(ctx, img, dx, dy, dw, dh, alpha, mode) {
 }
 
 /* ---------- Layer masks and clipping masks ---------- */
-let currentDocW = 0, currentDocH = 0;   // size of the document being built (a group used as a clipping base is drawn at this size)
+let currentDocW = 0, currentDocH = 0, currentWorkScale = 1;   // currentWorkScale: a huge file is read shrunk; effect sizes follow it   // size of the document being built (a group used as a clipping base is drawn at this size)
 /* multiply an image's alpha by pixel masks; image pixel (x,y) sits at document (ox + x*sx, oy + y*sy) */
 function maskImage(img, masks, ox, oy, sx, sy) {
   const W = img.width, H = img.height, out = makeCanvas(W, H), g = out.getContext("2d");
@@ -844,7 +846,7 @@ function applyFx(src, fx, k, angle, fill) {
   });
   return { canvas: out, pad };
 }
-function nodeFx(n) { if (n._fx === undefined) n._fx = applyFx(maskedOf(n), n.effects, 1, n.angle, n.fill); return n._fx; }
+function nodeFx(n) { if (n._fx === undefined) n._fx = applyFx(maskedOf(n), n.effects, n.fxK || 1, n.angle, n.fill); return n._fx; }
 function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
 
 function alphaBounds(c) {
@@ -897,7 +899,7 @@ function renderSoOriginal(src, n, st) {
   let pad = 0;
   if (st.fx && n.effects) {
     // effect sizes are in canvas pixels: scale them up to the original's resolution
-    const k = n.so.dispW > 0 ? src.width / n.so.dispW : 1;
+    const k = (n.so.dispW > 0 ? src.width / n.so.dispW : 1) * (n.fxK || 1);
     const f = applyFx(src, n.effects, k, n.angle, n.fill);
     if (f) { src = f.canvas; pad = f.pad; }
   }
@@ -937,6 +939,85 @@ function groupLeaves(g) { const out = []; walk(g.children, c => { if (c.kind !==
 const groupSos = g => groupLeaves(g).filter(c => c.so);
 const groupFxBad = g => [...new Set(groupLeaves(g).flatMap(c => c.fxBad))];
 
+/* ---------- CMYK and very large files ---------- */
+/* ag-psd can decode 8-bit CMYK but refuses it up front; let that one check through while a file is read */
+function readPsdAny(buf, opts) {
+  const io = Array.prototype.indexOf;
+  Array.prototype.indexOf = function (v, ...r) { if (v === 4 && this.length === 4 && this[0] === 0 && this[1] === 1 && this[2] === 3 && this[3] === 2) return 0; return io.call(this, v, ...r); };
+  try { return agPsd.readPsd(buf, opts); } finally { Array.prototype.indexOf = io; }
+}
+/* ag-psd turns CMYK into RGB with a plain multiply, which over-saturates; pull the result towards typical
+   coated-paper colours by mapping the RGB cube's corners (paper white, C, M, Y, R, G, B, rich black) */
+const CMYK_CORNERS = [[35, 31, 32], [46, 49, 146], [0, 166, 81], [0, 174, 239], [237, 28, 36], [236, 0, 140], [255, 242, 0], [255, 255, 255]]; // index = r*4 + g*2 + b
+function cmykFixPixels(px) {
+  const C = CMYK_CORNERS;
+  for (let i = 0; i < px.length; i += 4) {
+    if (!px[i + 3]) continue;
+    const r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255;
+    for (let k = 0; k < 3; k++) {
+      const c00 = C[0][k] * (1 - b) + C[1][k] * b, c01 = C[2][k] * (1 - b) + C[3][k] * b, c10 = C[4][k] * (1 - b) + C[5][k] * b, c11 = C[6][k] * (1 - b) + C[7][k] * b;
+      px[i + k] = (c00 * (1 - g) + c01 * g) * (1 - r) + (c10 * (1 - g) + c11 * g) * r;
+    }
+  }
+}
+function cmykFixCanvas(c) { if (!c || !c.width) return; const g = c.getContext("2d"), id = g.getImageData(0, 0, c.width, c.height); cmykFixPixels(id.data); g.putImageData(id, 0, 0); }
+function cmykFixPsd(psd) {
+  if (psd.canvas) cmykFixCanvas(psd.canvas);
+  const walkL = ls => (ls || []).forEach(L => { if (L.children) walkL(L.children); else if (L.canvas) cmykFixCanvas(L.canvas); });
+  walkL(psd.children);
+}
+/* browsers cap a canvas at 16384 px a side and a tab at a few GB, so a huge file is worked on at a reduced scale */
+const MAX_SIDE = 16000, PIXEL_BUDGET = 400e6;
+function workScaleFor(psd) {
+  let total = psd.width * psd.height * 2, side = Math.max(psd.width, psd.height);
+  const walkL = ls => (ls || []).forEach(L => { if (L.children) return walkL(L.children); const w = (L.right || 0) - (L.left || 0), h = (L.bottom || 0) - (L.top || 0); total += w * h; side = Math.max(side, w, h); });
+  walkL(psd.children);
+  const k = Math.min(1, MAX_SIDE / side, Math.sqrt(PIXEL_BUDGET / total));
+  return k >= 1 ? 1 : Math.floor(k * 100) / 100;
+}
+/* area-average an RGBA buffer (w×h) down to tw×th, weighting colour by alpha so edges stay clean */
+function downsample(src, w, h, tw, th) {
+  const out = makeCanvas(tw, th), g = out.getContext("2d"), id = g.createImageData(tw, th), d = id.data, s = src;
+  const fx = w / tw, fy = h / th, acc = new Float64Array(tw * 5);
+  for (let ty = 0; ty < th; ty++) {
+    acc.fill(0);
+    const y0 = Math.floor(ty * fy), y1 = Math.max(y0 + 1, Math.min(h, Math.floor((ty + 1) * fy)));
+    for (let y = y0; y < y1; y++) {
+      let row = y * w * 4;
+      for (let tx = 0; tx < tw; tx++) {
+        const x0 = Math.floor(tx * fx), x1 = Math.max(x0 + 1, Math.min(w, Math.floor((tx + 1) * fx))), o = tx * 5;
+        for (let x = x0; x < x1; x++) { const i = row + x * 4, a = s[i + 3]; acc[o] += s[i] * a; acc[o + 1] += s[i + 1] * a; acc[o + 2] += s[i + 2] * a; acc[o + 3] += a; acc[o + 4]++; }
+      }
+    }
+    for (let tx = 0; tx < tw; tx++) { const o = tx * 5, j = (ty * tw + tx) * 4, a = acc[o + 3];
+      if (a > 0) { d[j] = acc[o] / a; d[j + 1] = acc[o + 1] / a; d[j + 2] = acc[o + 2] / a; d[j + 3] = a / acc[o + 4]; } }
+  }
+  g.putImageData(id, 0, 0);
+  return out;
+}
+const scaleBox = (o, k) => { const l = Math.round((o.left || 0) * k), t = Math.round((o.top || 0) * k), r = Math.round((o.right || 0) * k), b = Math.round((o.bottom || 0) * k); return { l, t, w: Math.max(1, r - l), h: Math.max(1, b - t), r, b }; };
+/* decode one layer at a time from a raw read, shrink it by k and let the full-size pixels go */
+async function shrinkPsd(psd, k, onStep) {
+  const all = []; const walkL = ls => (ls || []).forEach(L => { all.push(L); if (L.children) walkL(L.children); }); walkL(psd.children);
+  for (let i = 0; i < all.length; i++) {
+    const L = all[i];
+    if (L.rawData) {
+      const w = (L.right || 0) - (L.left || 0), h = (L.bottom || 0) - (L.top || 0), box = scaleBox(L, k);
+      if (w > 0 && h > 0) { const id = agPsd.getLayerImageData(L); if (id) L.canvas = downsample(id.data, id.width, id.height, box.w, box.h); }
+      if (L.mask) {
+        const mw = (L.mask.right || 0) - (L.mask.left || 0), mh = (L.mask.bottom || 0) - (L.mask.top || 0), mb = scaleBox(L.mask, k);
+        if (mw > 0 && mh > 0) { const md = agPsd.getLayerMaskImageData(L); if (md) L.mask.canvas = downsample(md.data, md.width, md.height, mb.w, mb.h); }
+        Object.assign(L.mask, { left: mb.l, top: mb.t, right: mb.r, bottom: mb.b });
+      }
+      delete L.rawData;
+      Object.assign(L, { left: box.l, top: box.t, right: box.r, bottom: box.b });
+    } else if (!L.children) { const box = scaleBox(L, k); Object.assign(L, { left: box.l, top: box.t, right: box.r, bottom: box.b }); }
+    if (L.placedLayer && L.placedLayer.transform) L.placedLayer.transform = L.placedLayer.transform.map(v => v * k);
+    if (onStep) await onStep(i + 1, all.length);
+  }
+  psd.width = Math.round(psd.width * k); psd.height = Math.round(psd.height * k);
+}
+
 /* ---------- file loading ---------- */
 function fmtBytes(b) { if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"; return (b / 1073741824).toFixed(2) + " GB"; }
 const COLOR_MODE = ["Bitmap", "Grayscale", "Indexed", "RGB", "CMYK", "?", "?", "Multichannel", "Duotone", "Lab"];
@@ -951,13 +1032,32 @@ async function addFiles(list) {
     await new Promise(r => setTimeout(r, 30));
     try {
       const buf = await f.arrayBuffer();
-      const psd = agPsd.readPsd(buf, { skipThumbnail: true });
+      // a quick read without pixels tells whether the file fits in the browser at full size
+      const probe = readPsdAny(buf, { skipThumbnail: true, useRawData: true, skipCompositeImageData: true });
+      const k = workScaleFor(probe);
+      let psd;
+      if (k >= 1) {
+        // some CMYK files (extra alpha or spot channels) have a merged image ag-psd cannot decode: rebuild it from the layers instead
+        try { psd = readPsdAny(buf, { skipThumbnail: true }); }
+        catch (e) { if (probe.colorMode !== 4) throw e; psd = readPsdAny(buf, { skipThumbnail: true, skipCompositeImageData: true }); }
+      }
+      else {
+        await shrinkPsd(probe, k, async (i, n) => { setStatus(`ไฟล์ใหญ่ กำลังย่อเป็น ${Math.round(k * 100)}% · layer ${i}/${n}`); setProg(i / n); await new Promise(r => setTimeout(r, 0)); });
+        setProg(null); psd = probe;
+      }
+      if (psd.colorMode === 4) cmykFixPsd(psd);
+      currentWorkScale = k;
       const d = fromPsd(psd, f.name, f.size, ext);
+      currentWorkScale = 1;
+      d.workScale = k; d.origW = Math.round(psd.width / k); d.origH = Math.round(psd.height / k);
       S.docs.push(d); S.active = S.docs.length - 1; S.selected = null; S.fit = true;
       setStatus(`เปิด ${f.name} แล้ว`, "ok");
     } catch (e) {
       console.error(e);
-      setStatus(`อ่าน ${f.name} ไม่ได้: ${e && e.message ? e.message : e}. ลองบันทึกใหม่จาก Photoshop โดยเปิด "Maximize Compatibility"`, "bad");
+      const msg = e && e.message ? e.message : String(e);
+      if (/bitsPerChannel/i.test(msg)) setStatus(`เปิด ${f.name} ไม่ได้: ไฟล์ CMYK แบบ 16-bit ยังไม่รองรับ ให้เปลี่ยนเป็น 8-bit ใน Photoshop (Image › Mode › 8 Bits/Channel) แล้วบันทึกใหม่`, "bad");
+      else if (/memory|allocation|Array buffer|Invalid array length|Invalid typed array length/i.test(msg)) setStatus(`เปิด ${f.name} ไม่ได้: หน่วยความจำของเบราว์เซอร์ไม่พอ ลองปิดแท็บอื่นแล้วเปิดใหม่ หรือย่อไฟล์ใน Photoshop ก่อน`, "bad");
+      else setStatus(`อ่าน ${f.name} ไม่ได้: ${msg}. ลองบันทึกใหม่จาก Photoshop โดยเปิด "Maximize Compatibility"`, "bad");
     }
   }
   renderAll();
@@ -1193,6 +1293,12 @@ function renderOutInfo() {
   const zip = zipName(d);
   $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), (() => { const grps = p.filter(i => i.group).length; return `${p.length} ไฟล์ PNG` + (grps ? ` · กรุ๊ปที่รวม ${grps}` : "") + (p.length ? ` · เช่น ${p[0].path}` : ""); })(), el("br"), st.trim ? "ขนาดตามเนื้อภาพ (ตัดขอบใส)" : `ทุกไฟล์ ${W}×${H} px`);
   $("#splitBtn").disabled = $("#previewBtn").disabled = !p.length;
+
+  // file-level notes: CMYK colours and the reduced working size of a huge file
+  const notes = [];
+  if (d.colorMode === "CMYK") notes.push("ไฟล์ CMYK: แปลงเป็นสี RGB แบบประมาณ (ไม่ใช้ color profile) สีอาจต่างจาก Photoshop เล็กน้อย");
+  if (d.workScale && d.workScale < 1) notes.push(`ไฟล์ใหญ่เกินที่เบราว์เซอร์รับได้ (${d.origW}×${d.origH} px) จึงทำงานที่ ${Math.round(d.workScale * 100)}% · ไฟล์ PNG ที่ได้จะเล็กลงตามนี้`);
+  $("#docHint").replaceChildren(...(notes.length ? [el("ul", { class: "solist" }, ...notes.map(t => el("li", { text: t })))] : []));
 
   // Layer Style: styles that cannot be rendered yet
   const leaves = p.flatMap(i => i.group ? groupLeaves(i.node) : [i.node]);
