@@ -193,7 +193,9 @@ header .spacer{flex:1}
 .progress{height:8px;border-radius:99px;border:var(--sw) solid var(--stroke);background:var(--panel);overflow:hidden}
 .progress i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
 .statusbox{display:grid;gap:8px}
-.statusbox:has(.status:empty):has(.progress[hidden]){display:none}
+.statusbox:has(.status:empty):has(.progress[hidden]):has(#cancelBtn[hidden]){display:none}
+.statusrow{display:flex;align-items:flex-start;gap:8px}.statusrow .status{flex:1;min-width:0}
+.btn.small{padding:2px 9px;font-size:12px;flex:none}
 .status{font-size:12.5px;color:var(--muted);line-height:1.5}
 .status.ok{color:var(--ok)} .status.bad{color:var(--bad)}
 
@@ -239,7 +241,7 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
     <div class="filelist" id="fileList"></div>
     <div class="statusbox">
       <div class="progress" id="prog" hidden><i></i></div>
-      <div class="status" id="status" role="status"></div>
+      <div class="statusrow"><div class="status" id="status" role="status"></div><button class="btn small" id="cancelBtn" type="button" hidden>ยกเลิก</button></div>
     </div>
     <div id="fileNote"></div>
     </div>
@@ -1088,12 +1090,97 @@ async function shrinkPsd(psd, k, onStep) {
   psd.width = Math.round(psd.width * k); psd.height = Math.round(psd.height * k);
 }
 
+/* ---------- background reading (Web Worker) ---------- */
+/* reading and shrinking a file is the longest step, so it runs in a worker and the page stays responsive;
+   the worker is built from the same functions the page uses, and hands layer pixels back as ImageBitmaps */
+let workerURL = null, workerBroken = false, activeWorker = null, cancelReq = false;
+const cancelled = () => Object.assign(new Error("cancelled"), { cancelled: true });
+const checkCancel = () => { if (cancelReq) throw cancelled(); };
+function psdWorkerURL() {
+  if (workerURL) return workerURL;
+  const ag = document.querySelector('script[src*="ag-psd"]').src;
+  const src = [
+    `importScripts(${JSON.stringify(ag)});`,
+    "agPsd.initializeCanvas((w, h) => new OffscreenCanvas(Math.max(1, w), Math.max(1, h)));",
+    "function makeCanvas(w, h) { return new OffscreenCanvas(Math.max(1, Math.round(w)), Math.max(1, Math.round(h))); }",
+    `const CMYK_CORNERS = ${JSON.stringify(CMYK_CORNERS)}, MAX_SIDE = ${MAX_SIDE}, PIXEL_BUDGET = ${PIXEL_BUDGET};`,
+    `const scaleBox = ${scaleBox.toString()};`,
+    ...[readPsdAny, cmykFixPixels, cmykFixCanvas, cmykFixPsd, workScaleFor, downsample, shrinkPsd, workerMain].map(fn => fn.toString()),
+    "onmessage = workerMain;",
+  ].join("\n");
+  return (workerURL = URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+}
+/* runs inside the worker only */
+async function workerMain(e) {
+  const buf = e.data.buf, post = (m, t) => postMessage(m, t || []);
+  try {
+    const probe = readPsdAny(buf, { skipThumbnail: true, useRawData: true, skipCompositeImageData: true });
+    const k = workScaleFor(probe);
+    let psd;
+    if (k >= 1) {
+      try { psd = readPsdAny(buf, { skipThumbnail: true }); }
+      catch (err) { if (probe.colorMode !== 4) throw err; psd = readPsdAny(buf, { skipThumbnail: true, skipCompositeImageData: true }); }
+    } else { await shrinkPsd(probe, k, async (i, n) => post({ type: "progress", i, n, k })); psd = probe; }
+    if (psd.colorMode === 4) cmykFixPsd(psd);
+    const transfer = [], bmp = c => { const b = c.transferToImageBitmap(); transfer.push(b); return b; };
+    if (psd.canvas) { psd._bmp = bmp(psd.canvas); delete psd.canvas; }
+    const walkL = ls => (ls || []).forEach(L => {
+      if (L.canvas) { L._bmp = bmp(L.canvas); delete L.canvas; }
+      if (L.mask && L.mask.canvas) { L.mask._bmp = bmp(L.mask.canvas); delete L.mask.canvas; }
+      if (L.realMask) delete L.realMask.canvas;
+      if (L.children) walkL(L.children);
+    });
+    walkL(psd.children);
+    // a typed array that is a view into the file would drag the whole file along when posted: copy it out
+    const seen = new Set();
+    const fix = (o, depth) => {
+      if (!o || typeof o !== "object" || depth > 16 || seen.has(o)) return; seen.add(o);
+      for (const key of Object.keys(o)) { const v = o[key];
+        if (ArrayBuffer.isView(v)) { if (v.buffer === buf) o[key] = v.slice(); }
+        else if (v && typeof v === "object" && !(v instanceof ImageBitmap)) fix(v, depth + 1); }
+    };
+    fix(psd, 0);
+    post({ type: "done", psd, k }, transfer);
+  } catch (err) { post({ type: "error", message: err && err.message ? err.message : String(err) }); }
+}
+function readInWorker(buf, onProgress) {
+  return new Promise((resolve, reject) => {
+    let w; try { w = new Worker(psdWorkerURL()); } catch (e) { reject(Object.assign(e, { noWorker: true })); return; }
+    const end = () => { w.terminate(); activeWorker = null; };
+    activeWorker = { stop: () => { end(); reject(cancelled()); } };
+    w.onmessage = e => { const m = e.data; if (m.type === "progress") { onProgress(m); return; } end(); if (m.type === "done") resolve(m); else reject(new Error(m.message)); };
+    w.onerror = e => { e.preventDefault(); end(); reject(Object.assign(new Error(e.message || "worker failed"), { noWorker: true })); };
+    w.postMessage({ buf }, [buf]);
+  });
+}
+function fromBitmaps(psd) {
+  const cv = b => { const c = makeCanvas(b.width, b.height); c.getContext("2d").drawImage(b, 0, 0); b.close(); return c; };
+  if (psd._bmp) { psd.canvas = cv(psd._bmp); delete psd._bmp; }
+  const walkL = ls => (ls || []).forEach(L => { if (L._bmp) { L.canvas = cv(L._bmp); delete L._bmp; } if (L.mask && L.mask._bmp) { L.mask.canvas = cv(L.mask._bmp); delete L.mask._bmp; } if (L.children) walkL(L.children); });
+  walkL(psd.children);
+}
+/* the same read on the page itself, for browsers without workers or OffscreenCanvas */
+async function readOnPage(buf, onProgress) {
+  const probe = readPsdAny(buf, { skipThumbnail: true, useRawData: true, skipCompositeImageData: true });
+  const k = workScaleFor(probe);
+  let psd;
+  if (k >= 1) {
+    // some CMYK files (extra alpha or spot channels) have a merged image ag-psd cannot decode: rebuild it from the layers instead
+    try { psd = readPsdAny(buf, { skipThumbnail: true }); }
+    catch (e) { if (probe.colorMode !== 4) throw e; psd = readPsdAny(buf, { skipThumbnail: true, skipCompositeImageData: true }); }
+  } else { await shrinkPsd(probe, k, async (i, n) => { checkCancel(); onProgress({ i, n, k }); await new Promise(r => setTimeout(r, 0)); }); psd = probe; }
+  if (psd.colorMode === 4) cmykFixPsd(psd);
+  return { psd, k };
+}
+function setBusyUI(on) { $("#cancelBtn").hidden = !on; }
+
 /* ---------- file loading ---------- */
 function fmtBytes(b) { if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"; return (b / 1073741824).toFixed(2) + " GB"; }
 const COLOR_MODE = ["Bitmap", "Grayscale", "Indexed", "RGB", "CMYK", "?", "?", "Multichannel", "Duotone", "Lab"];
 
 async function addFiles(list) {
   $("#fileNote").replaceChildren();
+  cancelReq = false; setBusyUI(true);
   for (const f of list) {
     const ext = (f.name.split(".").pop() || "").toLowerCase();
     if (ext === "ai") { showAiNote(f.name); continue; }
@@ -1101,21 +1188,16 @@ async function addFiles(list) {
     setStatus(`กำลังอ่าน ${f.name}…`);
     await new Promise(r => setTimeout(r, 30));
     try {
-      const buf = await f.arrayBuffer();
-      // a quick read without pixels tells whether the file fits in the browser at full size
-      const probe = readPsdAny(buf, { skipThumbnail: true, useRawData: true, skipCompositeImageData: true });
-      const k = workScaleFor(probe);
-      let psd;
-      if (k >= 1) {
-        // some CMYK files (extra alpha or spot channels) have a merged image ag-psd cannot decode: rebuild it from the layers instead
-        try { psd = readPsdAny(buf, { skipThumbnail: true }); }
-        catch (e) { if (probe.colorMode !== 4) throw e; psd = readPsdAny(buf, { skipThumbnail: true, skipCompositeImageData: true }); }
+      const onProgress = m => { if (m.n) { setStatus(`ไฟล์ใหญ่ กำลังย่อเป็น ${Math.round(m.k * 100)}% · layer ${m.i}/${m.n}`); setProg(m.i / m.n); } };
+      let res = null;
+      if (!workerBroken && typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined") {
+        try { res = await readInWorker(await f.arrayBuffer(), onProgress); fromBitmaps(res.psd); }
+        catch (e) { if (!e.noWorker) throw e; console.warn("worker unavailable, reading on the page", e); workerBroken = true; }
       }
-      else {
-        await shrinkPsd(probe, k, async (i, n) => { setStatus(`ไฟล์ใหญ่ กำลังย่อเป็น ${Math.round(k * 100)}% · layer ${i}/${n}`); setProg(i / n); await new Promise(r => setTimeout(r, 0)); });
-        setProg(null); psd = probe;
-      }
-      if (psd.colorMode === 4) cmykFixPsd(psd);
+      checkCancel();
+      if (!res) res = await readOnPage(await f.arrayBuffer(), onProgress);
+      const { psd, k } = res;
+      setProg(null); setStatus(`กำลังเตรียมภาพตัวอย่าง ${f.name}…`); await new Promise(r => setTimeout(r, 30));
       currentWorkScale = k;
       const d = fromPsd(psd, f.name, f.size, ext);
       currentWorkScale = 1;
@@ -1123,6 +1205,8 @@ async function addFiles(list) {
       S.docs.push(d); S.active = S.docs.length - 1; S.selected = null; S.fit = true;
       setStatus(`เปิด ${f.name} แล้ว`, "ok");
     } catch (e) {
+      setProg(null); currentWorkScale = 1;
+      if (e && e.cancelled) { setStatus(`ยกเลิกการเปิด ${f.name} แล้ว`); break; }
       console.error(e);
       const msg = e && e.message ? e.message : String(e);
       if (/bitsPerChannel/i.test(msg)) setStatus(`เปิด ${f.name} ไม่ได้: ไฟล์ CMYK แบบ 16-bit ยังไม่รองรับ ให้เปลี่ยนเป็น 8-bit ใน Photoshop (Image › Mode › 8 Bits/Channel) แล้วบันทึกใหม่`, "bad");
@@ -1130,6 +1214,7 @@ async function addFiles(list) {
       else setStatus(`อ่าน ${f.name} ไม่ได้: ${msg}. ลองบันทึกใหม่จาก Photoshop โดยเปิด "Maximize Compatibility"`, "bad");
     }
   }
+  setBusyUI(false);
   renderAll();
 }
 function fromPsd(psd, name, size, ext) {
@@ -1420,20 +1505,21 @@ async function renderPlan(onItem) {
     if (c) out.push({ path: p[i].path, canvas: c, node: n, note, group: grp });
     setProg((i + 1) / p.length);
     if (onItem) await onItem(i, p.length);
-    if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));   // let the page breathe between layers
+    checkCancel();
   }
   return out;
 }
 
 async function doSplit() {
-  if (busy || !doc()) return; busy = true; $("#splitBtn").disabled = true;
+  if (busy || !doc()) return; busy = true; $("#splitBtn").disabled = true; cancelReq = false; setBusyUI(true);
   try {
     const d = doc();
     setStatus("กำลังแยก layer…"); setProg(0);
     const files = await renderPlan();
     setStatus("กำลังรวมเป็น ZIP…");
     const zip = new JSZip();
-    for (const f of files) zip.file(f.path, await toBlob(f.canvas));
+    for (const f of files) { checkCancel(); zip.file(f.path, await toBlob(f.canvas)); }
     const blob = await zip.generateAsync({ type: "blob", compression: "STORE" }, m => setProg(m.percent / 100));
     window.__lastZip = blob; // used by automated checks
     const name = zipName(d);
@@ -1445,12 +1531,12 @@ async function doSplit() {
     if (!downloads) { setStatus(`ได้ ${files.length} ไฟล์ (${fmtBytes(blob.size)}) แต่หน้านี้บันทึกไฟล์ไม่ได้ ลองเปิดใน claude.ai`, "bad"); return; }
     try { await downloads.save({ filename: name, data: blob }); setStatus(`บันทึก ${name} แล้ว · ${files.length} ไฟล์ · ${fmtBytes(blob.size)}`, "ok"); }
     catch (e) { setStatus(e && e.code === "declined" ? "ยกเลิกการบันทึกแล้ว" : e && e.code === "rate_limited" ? "มีหน้าต่างบันทึกเปิดอยู่ ลองอีกครั้งในอีกสักครู่" : "บันทึกไฟล์ในหน้านี้ไม่ได้", e && e.code === "declined" ? "" : "bad"); }
-  } catch (e) { console.error(e); setStatus("แยก layer ไม่สำเร็จ: " + (e.message || e), "bad"); }
-  finally { busy = false; setProg(null); renderOutInfo(); }
+  } catch (e) { if (e && e.cancelled) setStatus("ยกเลิกการแยก layer แล้ว"); else { console.error(e); setStatus("แยก layer ไม่สำเร็จ: " + (e.message || e), "bad"); } }
+  finally { busy = false; setProg(null); setBusyUI(false); renderOutInfo(); }
 }
 
 async function doPreview() {
-  if (busy || !doc()) return; busy = true;
+  if (busy || !doc()) return; busy = true; cancelReq = false; setBusyUI(true);
   try {
     setStatus("กำลังสร้างตัวอย่าง…"); setProg(0);
     const files = await renderPlan();
@@ -1467,8 +1553,8 @@ async function doPreview() {
     }
     $("#dlgCount").textContent = `${files.length} ไฟล์`;
     $("#dlg").showModal(); setStatus("");
-  } catch (e) { console.error(e); setStatus("สร้างตัวอย่างไม่สำเร็จ: " + (e.message || e), "bad"); }
-  finally { busy = false; setProg(null); }
+  } catch (e) { if (e && e.cancelled) setStatus("ยกเลิกการสร้างตัวอย่างแล้ว"); else { console.error(e); setStatus("สร้างตัวอย่างไม่สำเร็จ: " + (e.message || e), "bad"); } }
+  finally { busy = false; setProg(null); setBusyUI(false); }
 }
 
 /* ---------- wiring ---------- */
@@ -1488,6 +1574,7 @@ const drop = $("#drop");
 ["dragleave", "drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === document.documentElement) drop.classList.remove("over"); }));
 document.addEventListener("drop", e => { const fs = [...(e.dataTransfer && e.dataTransfer.files || [])]; if (fs.length) { dropSample(); addFiles(fs); } });
 function dropSample() { const i = S.docs.findIndex(d => d.sample); if (i >= 0) { S.docs.splice(i, 1); S.active = S.docs.length - 1; } }
+$("#cancelBtn").addEventListener("click", () => { cancelReq = true; setStatus("กำลังยกเลิก…"); if (activeWorker) activeWorker.stop(); });
 $("#dpi").addEventListener("change", renderOutInfo);
 $("#fx").addEventListener("change", () => { renderOutInfo(); renderStage(); });
 document.querySelectorAll("input[name=so]").forEach(r => r.addEventListener("change", () => { renderOutInfo(); renderStage(); }));
