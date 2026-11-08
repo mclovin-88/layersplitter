@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>[hidden]{display:none!important}body{margin:0}img{max-width:100%}</style></head><body>
+<title>Layer Splitter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: four working panels — files · canvas preview · layer tree · export settings — that fold to two columns, then one */
+:root{
+  --bg:#f6f5fb; --panel:#ffffff; --line:#e4e1ef; --fg:#1d1b29; --muted:#6b6880;
+  --accent:#5b4bd6; --accent-ink:#ffffff; --accent-soft:#ece9fc; --hover:#f1effa;
+  --warn:#a35a00; --warn-bg:#fff4e2; --bad:#b4233a; --ok:#1d7a4f;
+  --check:#e9e7f2; --check-2:#ffffff;
+  --font-ui:"IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-data:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#13121a; --panel:#1c1a26; --line:#2f2c3d; --fg:#ecebf3; --muted:#a3a0b8;
+  --accent:#8f82ff; --accent-ink:#14121c; --accent-soft:#2a2645; --hover:#252233;
+  --warn:#f0b35a; --warn-bg:#33270f; --bad:#ff7a8e; --ok:#5fd39b;
+  --check:#26232f; --check-2:#1f1d28; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#13121a; --panel:#1c1a26; --line:#2f2c3d; --fg:#ecebf3; --muted:#a3a0b8;
+  --accent:#8f82ff; --accent-ink:#14121c; --accent-soft:#2a2645; --hover:#252233;
+  --warn:#f0b35a; --warn-bg:#33270f; --bad:#ff7a8e; --ok:#5fd39b;
+  --check:#26232f; --check-2:#1f1d28; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--font-ui);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 24px}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header.top{display:flex;align-items:center;gap:12px;margin:0 auto 14px;max-width:1500px}
+.logo{width:36px;height:36px;border-radius:9px;background:var(--accent);display:grid;place-items:center;flex:none}
+.logo svg{width:20px;height:20px}
+header h1{font-size:18px;margin:0;line-height:1.2}
+header p{margin:0;color:var(--muted);font-size:12.5px}
+header .spacer{flex:1}
+
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.block{width:100%;justify-content:center;padding:10px 12px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--accent);padding:4px 6px}
+.btn.ghost:hover{background:var(--accent-soft)}
+
+.app{max-width:1500px;margin:0 auto;display:grid;gap:14px;
+  grid-template-columns:240px minmax(0,1fr) 300px 280px;
+  grid-template-areas:"files stage layers settings";align-items:start}
+@media (max-width:1280px){.app{grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  grid-template-areas:"files files" "stage stage" "layers settings"}}
+@media (max-width:760px){.app{grid-template-columns:minmax(0,1fr);
+  grid-template-areas:"files" "stage" "layers" "settings"}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);min-width:0}
+.panel h2{font-size:13px;margin:0;font-weight:600}
+.phead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.phead .count{margin-left:auto;color:var(--muted);font:12px var(--font-data)}
+
+/* files */
+#files{grid-area:files;padding:14px;display:grid;gap:12px;grid-template-columns:minmax(0,1fr)}
+#files>*{min-width:0}
+.drop{border:1.5px dashed color-mix(in srgb,var(--accent) 55%,var(--line));border-radius:var(--r);padding:20px 14px;text-align:center;display:grid;gap:8px;justify-items:center;background:color-mix(in srgb,var(--accent-soft) 45%,transparent);transition:background .15s}
+.drop.over{background:var(--accent-soft)}
+.drop svg{width:34px;height:34px;color:var(--accent)}
+.drop strong{font-size:14px}
+.drop small{color:var(--muted);font-size:12px;line-height:1.45}
+.filelist{display:grid;gap:6px;grid-template-columns:minmax(0,1fr)}
+.file{min-width:0}
+.file{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;background:var(--panel);text-align:left;width:100%}
+.file:hover{background:var(--hover)}
+.file[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.ftag{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;font:600 10.5px var(--font-data);flex:none;background:#0d1b3d;color:#4fb3ff}
+.ftag.ai{background:#3a1c00;color:#ff9a1f}
+.file .meta{min-width:0;flex:1}
+.file .name{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;font-size:13px}
+.file .sub{display:block;color:var(--muted);font:11.5px var(--font-data)}
+.file .x{border:0;background:none;color:var(--muted);cursor:pointer;padding:2px 4px;border-radius:4px}
+.file .x:hover{color:var(--bad);background:var(--hover)}
+.note{border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.55}
+.note.warn{background:var(--warn-bg);color:var(--warn)}
+.note.info{background:var(--accent-soft);color:var(--fg)}
+.badge{display:inline-block;font:600 10.5px var(--font-data);letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--accent-soft);color:var(--accent)}
+
+/* stage */
+#stage{grid-area:stage;display:flex;flex-direction:column;min-height:420px}
+.tabs{display:flex;gap:2px}
+.tab{border:0;background:none;padding:6px 10px;border-radius:6px;cursor:pointer;color:var(--muted);font-weight:500}
+.tab[aria-selected="true"]{color:var(--accent);background:var(--accent-soft)}
+.zoom{margin-left:auto;display:flex;align-items:center;gap:4px;font:12px var(--font-data)}
+.zoom button{width:28px;height:28px;border:1px solid var(--line);background:var(--panel);border-radius:6px;cursor:pointer}
+.zoom button:hover{background:var(--hover)}
+.zoom output{min-width:46px;text-align:center}
+.viewport{flex:1;overflow:auto;padding:18px;display:grid;place-items:center;min-height:360px;
+  background-color:var(--check-2);
+  background-image:linear-gradient(45deg,var(--check) 25%,transparent 25%),linear-gradient(-45deg,var(--check) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,var(--check) 75%),linear-gradient(-45deg,transparent 75%,var(--check) 75%);
+  background-size:16px 16px;background-position:0 0,0 8px,8px -8px,-8px 0;border-radius:0 0 var(--r) var(--r)}
+.art{position:relative;box-shadow:0 1px 3px rgb(0 0 0 / .18),0 8px 30px rgb(0 0 0 / .12);line-height:0}
+.art canvas{display:block;width:100%;height:100%}
+.hl{position:absolute;border:1.5px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);pointer-events:none;box-shadow:0 0 0 9999px rgb(0 0 0 / .18)}
+.hl span{position:absolute;left:-1.5px;bottom:100%;background:var(--accent);color:var(--accent-ink);font:500 11px/1.6 var(--font-ui);padding:0 6px;border-radius:4px 4px 0 0;white-space:nowrap}
+.info{padding:18px;display:none}
+.info dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;margin:0}
+.info dt{color:var(--muted)}
+.info dd{margin:0;font-family:var(--font-data);font-size:13px;word-break:break-all}
+.info h3{font-size:13px;margin:22px 0 8px}
+.info ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
+.empty-state{display:grid;gap:6px;justify-items:center;color:var(--muted);text-align:center;padding:30px}
+
+/* layers */
+#layers{grid-area:layers;display:flex;flex-direction:column;max-height:calc(100vh - 110px);min-height:420px}
+@media (max-width:1280px){#layers{max-height:560px}}
+.search{padding:10px 12px;border-bottom:1px solid var(--line)}
+.search input{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:7px;padding:7px 10px}
+.tree{overflow:auto;flex:1;padding:6px 6px;list-style:none;margin:0}
+.tree ul{list-style:none;margin:0;padding:0}
+.row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;cursor:default;min-height:38px}
+.row:hover{background:var(--hover)}
+.row.sel{background:var(--accent-soft)}
+.row.dim .lname{color:var(--muted)}
+.row input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);flex:none;margin:0;cursor:pointer}
+.twisty{width:18px;height:18px;border:0;background:none;padding:0;cursor:pointer;color:var(--muted);flex:none;display:grid;place-items:center;border-radius:4px}
+.twisty:hover{background:var(--line)}
+.twisty svg{width:12px;height:12px;transition:transform .15s}
+.twisty[aria-expanded="false"] svg{transform:rotate(-90deg)}
+.twisty.none{visibility:hidden}
+.thumb{width:30px;height:30px;border-radius:4px;border:1px solid var(--line);flex:none;display:grid;place-items:center;overflow:hidden;
+  background-color:var(--check-2);background-image:linear-gradient(45deg,var(--check) 25%,transparent 25%),linear-gradient(-45deg,var(--check) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,var(--check) 75%),linear-gradient(-45deg,transparent 75%,var(--check) 75%);background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0}
+.thumb canvas{max-width:100%;max-height:100%}
+.thumb svg{width:16px;height:16px;color:var(--muted)}
+.lname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;cursor:pointer}
+.ltag{font:10.5px var(--font-data);color:var(--muted);flex:none}
+.eye{color:var(--muted);flex:none;display:grid;place-items:center;width:18px}
+.eye svg{width:14px;height:14px}
+.tfoot{display:flex;gap:4px;padding:8px 10px;border-top:1px solid var(--line);flex-wrap:wrap}
+.tfoot .sum{margin-left:auto;color:var(--muted);font:12px var(--font-data);align-self:center}
+
+/* settings */
+#settings{grid-area:settings;padding:14px;display:grid;gap:16px}
+.field{display:grid;gap:6px}
+.field>label,.field>.lbl{font-weight:600;font-size:12.5px}
+.field select{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:7px;padding:8px 10px}
+.field .hint{color:var(--muted);font-size:12px;line-height:1.45}
+.checkrow{display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer}
+.checkrow input{margin-top:3px;accent-color:var(--accent);width:15px;height:15px;flex:none}
+.checkrow small{display:block;color:var(--muted);font-size:12px}
+.radios{display:grid;gap:6px}
+.colorrow{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.colorrow input{width:34px;height:26px;border:1px solid var(--line);border-radius:6px;padding:0;background:none}
+.outinfo{font:12px/1.6 var(--font-data);color:var(--muted);background:var(--bg);border-radius:7px;padding:8px 10px}
+.outinfo b{color:var(--fg);font-weight:500}
+hr.sep{border:0;border-top:1px solid var(--line);margin:0}
+.progress{height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+.progress i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+.status{font-size:12.5px;color:var(--muted);min-height:1.5em}
+.status.ok{color:var(--ok)} .status.bad{color:var(--bad)}
+
+/* export preview */
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--fg);padding:0;width:min(980px,calc(100vw - 32px));max-height:calc(100vh - 48px)}
+dialog::backdrop{background:rgb(10 8 20 / .5)}
+.dhead{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:1}
+.dhead h2{font-size:15px;margin:0}
+.dhead .count{color:var(--muted);font:12px var(--font-data)}
+.dhead .btn:last-child{margin-left:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:16px 18px 20px}
+.card{border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.card .pic{aspect-ratio:1;display:grid;place-items:center;padding:8px;max-width:100%;
+  background-color:var(--check-2);background-image:linear-gradient(45deg,var(--check) 25%,transparent 25%),linear-gradient(-45deg,var(--check) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,var(--check) 75%),linear-gradient(-45deg,transparent 75%,var(--check) 75%);background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0}
+.card img{max-width:100%;max-height:100%;object-fit:contain}
+.card .cap{padding:7px 9px;border-top:1px solid var(--line);display:grid;gap:1px}
+.card .fn{font:500 12px var(--font-data);word-break:break-all}
+.card .dim{font:11px var(--font-data);color:var(--muted)}
+.foot{text-align:center;color:var(--muted);font-size:12px;margin:18px auto 0;max-width:1500px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="top">
+  <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/><path d="m2 17.5 10 5 10-5" opacity=".6"/></svg></div>
+  <div><h1>Layer Splitter</h1><p>แยก layer จากไฟล์ .psd / .psb เป็น PNG ทีละไฟล์</p></div>
+  <div class="spacer"></div>
+  <button class="btn" id="addBtn" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>เพิ่มไฟล์</button>
+  <input type="file" id="fileInput" accept=".psd,.psb,.ai" multiple hidden>
+</header>
+
+<main class="app">
+  <!-- FILES -->
+  <section class="panel" id="files" aria-label="ไฟล์">
+    <div class="drop" id="drop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5"/><path d="M12 12v8M8.5 15.5 12 12l3.5 3.5"/></svg>
+      <strong>ลากไฟล์ .psd หรือ .psb มาวางที่นี่</strong>
+      <button class="btn primary" id="browseBtn" type="button">เลือกไฟล์</button>
+      <small>ไฟล์ไม่ถูกส่งออกจากเครื่อง ทุกอย่างประมวลผลในเบราว์เซอร์<br>ไฟล์ใหญ่หลาย GB ขึ้นกับหน่วยความจำของเครื่อง</small>
+    </div>
+    <div class="filelist" id="fileList"></div>
+    <div id="fileNote"></div>
+  </section>
+
+  <!-- STAGE -->
+  <section class="panel" id="stage" aria-label="ตัวอย่าง">
+    <div class="phead">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" id="tabPreview" type="button">Preview</button>
+        <button class="tab" role="tab" aria-selected="false" id="tabInfo" type="button">Info</button>
+      </div>
+      <div class="zoom" id="zoomBox">
+        <button type="button" id="zOut" aria-label="ซูมออก">−</button>
+        <output id="zVal">100%</output>
+        <button type="button" id="zIn" aria-label="ซูมเข้า">+</button>
+        <button type="button" id="zFit" aria-label="พอดีกรอบ" title="พอดีกรอบ"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
+    </div>
+    <div class="viewport" id="viewport"><div class="empty-state">ยังไม่มีไฟล์</div></div>
+    <div class="info" id="info"></div>
+  </section>
+
+  <!-- LAYERS -->
+  <section class="panel" id="layers" aria-label="Layers">
+    <div class="phead"><h2>Layers</h2><span class="count" id="layerCount">0 layers</span></div>
+    <div class="search"><input type="search" id="search" placeholder="ค้นหา layer" aria-label="ค้นหา layer"></div>
+    <ul class="tree" id="tree" role="tree"></ul>
+    <div class="tfoot">
+      <button class="btn ghost" id="selAll" type="button">เลือกทั้งหมด</button>
+      <button class="btn ghost" id="selNone" type="button">ไม่เลือกเลย</button>
+      <button class="btn ghost" id="selVisible" type="button">เฉพาะที่เปิดตา</button>
+      <span class="sum" id="selSum"></span>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="panel" id="settings" aria-label="ตั้งค่า export">
+    <h2 style="font-size:14px">ตั้งค่า Export</h2>
+
+    <div class="field">
+      <span class="lbl">แยกแบบ</span>
+      <div class="radios">
+        <label class="checkrow"><input type="radio" name="mode" value="all" id="modeAll" checked><span>ทุก layer<small>group กลายเป็นโฟลเดอร์ <code>N_ชื่อgroup/</code></small></span></label>
+        <label class="checkrow"><input type="radio" name="mode" value="top" id="modeTop"><span>เฉพาะชั้นบนสุด<small>group รวมเป็นภาพเดียว</small></span></label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="dpi">ความละเอียด (DPI)</label>
+      <select id="dpi">
+        <option value="orig">ตามไฟล์ต้นฉบับ</option>
+        <option value="72">72 (หน้าจอ)</option>
+        <option value="150">150</option>
+        <option value="300">300 (งานพิมพ์)</option>
+      </select>
+      <span class="hint" id="dpiHint"></span>
+    </div>
+
+    <div class="field">
+      <span class="lbl">ภาพ</span>
+      <label class="checkrow"><input type="checkbox" id="transparent" checked><span>พื้นหลังโปร่งใส</span></label>
+      <div class="colorrow" id="bgRow" hidden><input type="color" id="bgColor" value="#ffffff" aria-label="สีพื้นหลัง"><span>สีพื้นหลัง</span></div>
+      <label class="checkrow"><input type="checkbox" id="trim" checked><span>ตัดขอบใสออก (Trim)<small>ปิดไว้ถ้าต้องการให้ทุกไฟล์ขนาดเท่า canvas และตำแหน่งตรงกันเวลาวางซ้อนใน After Effects</small></span></label>
+      <label class="checkrow"><input type="checkbox" id="opacity" checked><span>ใช้ค่า Opacity ของ layer</span></label>
+    </div>
+
+    <div class="field">
+      <span class="lbl">ผลลัพธ์</span>
+      <div class="outinfo" id="outInfo">—</div>
+    </div>
+
+    <hr class="sep">
+    <div style="display:grid;gap:8px">
+      <button class="btn primary block" id="splitBtn" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg>Split Layers → ZIP</button>
+      <button class="btn block" id="previewBtn" type="button">ดูตัวอย่างไฟล์ที่จะได้</button>
+      <div class="progress" id="prog" hidden><i></i></div>
+      <div class="status" id="status" role="status"></div>
+    </div>
+  </section>
+</main>
+<p class="foot">ตั้งชื่อไฟล์ 1.png, 2.png… เรียงจาก layer บนสุดลงล่าง ตรงกับ script Export Layers to PNG v5</p>
+
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <div class="dhead"><h2 id="dlgTitle">ไฟล์ที่จะได้</h2><span class="count" id="dlgCount"></span><button class="btn" id="dlgClose" type="button">ปิด</button></div>
+  <div class="grid" id="dlgGrid"></div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/ag-psd@31.0.3/dist/bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (tag, props = {}, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v); } kids.flat().forEach(c => c != null && n.append(c)); return n; };
+const ICON = {
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>',
+  text: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg>',
+  adj: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="m6 9 6 6 6-6"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l18 18M10.6 6.1A9.9 9.9 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-3 3.5M6.6 6.6C4.3 8.2 3 12 3 12s4 6 9 6c1.4 0 2.7-.4 3.9-1"/></svg>'
+};
+
+/* ---------- state ---------- */
+const S = { docs: [], active: -1, zoom: 1, fit: true, selected: null, tab: "preview" };
+let uid = 0;
+const doc = () => S.docs[S.active] || null;
+
+/* ---------- capabilities ---------- */
+let downloads = null;
+if (window.claude && typeof window.claude.use === "function") {
+  window.claude.use("downloads").then(d => { downloads = d; }).catch(() => {});
+}
+
+/* ---------- model ---------- */
+const BLEND = { "normal":"source-over","pass through":"source-over","multiply":"multiply","screen":"screen","overlay":"overlay","darken":"darken","lighten":"lighten","color dodge":"color-dodge","color burn":"color-burn","hard light":"hard-light","soft light":"soft-light","difference":"difference","exclusion":"exclusion","hue":"hue","saturation":"saturation","color":"color","luminosity":"luminosity","linear dodge":"lighter" };
+
+function buildNodes(children, parent) {
+  // ag-psd lists children bottom→top; the UI and the numbering go top→bottom.
+  const out = [];
+  for (let i = (children || []).length - 1; i >= 0; i--) {
+    const L = children[i];
+    const isGroup = Array.isArray(L.children);
+    const n = {
+      id: ++uid, name: (L.name || "Layer").trim() || "Layer", parent,
+      kind: isGroup ? "group" : (L.canvas && L.canvas.width && L.canvas.height ? (L.text ? "text" : "layer") : "empty"),
+      hidden: !!L.hidden, opacity: L.opacity == null ? 1 : L.opacity,
+      blend: L.blendMode || "normal", left: L.left || 0, top: L.top || 0,
+      canvas: L.canvas || null, adjustment: !!L.adjustment, clipping: !!L.clipping,
+      expanded: isGroup ? (L.opened !== false) : false, checked: false, children: []
+    };
+    if (isGroup) n.children = buildNodes(L.children, n);
+    out.push(n);
+  }
+  return out;
+}
+function walk(nodes, fn) { for (const n of nodes) { fn(n); if (n.children.length) walk(n.children, fn); } }
+function effHidden(n) { for (let p = n; p; p = p.parent) if (p.hidden) return true; return false; }
+function hasContent(n) { if (n.kind === "group") return n.children.some(hasContent); return n.kind === "layer" || n.kind === "text"; }
+function leafChecked(n) { return n.kind === "group" ? n.children.some(leafChecked) : n.checked; }
+
+function setDefaultChecks(d) { walk(d.nodes, n => { if (n.kind !== "group") n.checked = hasContent(n) && !effHidden(n); }); }
+
+/* ---------- rendering helpers ---------- */
+function drawTree(ctx, nodes, scale, opts, alphaMul) {
+  // nodes are top→bottom; paint bottom first.
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (n.hidden && opts.respectHidden) continue;
+    if (opts.onlyChecked && !leafChecked(n)) continue;
+    const a = alphaMul * (opts.useOpacity ? n.opacity : 1);
+    if (n.kind === "group") { drawTree(ctx, n.children, scale, opts, a); continue; }
+    if (!n.canvas || n.kind === "empty") continue;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.globalCompositeOperation = opts.blend ? (BLEND[n.blend] || "source-over") : "source-over";
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(n.canvas, n.left * scale, n.top * scale, n.canvas.width * scale, n.canvas.height * scale);
+    ctx.restore();
+  }
+}
+function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+
+function alphaBounds(c) {
+  const { width: w, height: h } = c; const d = c.getContext("2d").getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) { const row = y * w * 4; for (let x = 0; x < w; x++) { if (d[row + x * 4 + 3] > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } } }
+  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+function settings() {
+  const d = doc();
+  const dpiSel = $("#dpi").value;
+  const src = (d && d.dpi) || 72;
+  const target = dpiSel === "orig" ? src : +dpiSel;
+  return {
+    mode: document.querySelector('input[name=mode]:checked').value,
+    scale: target / src, targetDpi: target, srcDpi: src,
+    transparent: $("#transparent").checked, bg: $("#bgColor").value,
+    trim: $("#trim").checked, useOpacity: $("#opacity").checked
+  };
+}
+
+/* render one node (layer or merged group) into a finished canvas */
+function renderNode(d, n, st) {
+  const full = makeCanvas(d.width * st.scale, d.height * st.scale);
+  const ctx = full.getContext("2d");
+  const isGroup = n.kind === "group";
+  drawTree(ctx, [n], st.scale, { respectHidden: false, onlyChecked: isGroup, useOpacity: st.useOpacity, blend: isGroup }, 1);
+  // a group's own hidden flag is ignored here: the person picked its children explicitly
+  let out = full;
+  if (st.trim) {
+    const b = alphaBounds(full);
+    if (!b) return null;
+    out = makeCanvas(b.w, b.h);
+    out.getContext("2d").drawImage(full, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
+  } else if (!alphaBounds(full)) return null;
+  if (!st.transparent) {
+    const f = makeCanvas(out.width, out.height); const fc = f.getContext("2d");
+    fc.fillStyle = st.bg; fc.fillRect(0, 0, f.width, f.height); fc.drawImage(out, 0, 0); out = f;
+  }
+  return out;
+}
+
+const safeName = s => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 60) || "Group";
+
+/* export plan: [{path, node}] in top→bottom order; numbering counts only what gets exported */
+function plan(d, st) {
+  const items = [];
+  const level = (nodes, prefix) => {
+    let k = 0;
+    for (const n of nodes) {
+      if (!leafChecked(n)) continue;
+      if (n.kind === "group" && st.mode === "all") {
+        k++; level(n.children, `${prefix}${k}_${safeName(n.name)}/`);
+      } else if (n.kind === "group" || n.kind === "layer" || n.kind === "text") {
+        k++; items.push({ path: `${prefix}${k}.png`, node: n });
+      }
+    }
+  };
+  level(d.nodes, "");
+  return items;
+}
+
+/* ---------- file loading ---------- */
+function fmtBytes(b) { if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"; return (b / 1073741824).toFixed(2) + " GB"; }
+const COLOR_MODE = ["Bitmap", "Grayscale", "Indexed", "RGB", "CMYK", "?", "?", "Multichannel", "Duotone", "Lab"];
+
+async function addFiles(list) {
+  for (const f of list) {
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (ext === "ai") { showAiNote(f.name); continue; }
+    if (ext !== "psd" && ext !== "psb") { setStatus(`ข้าม ${f.name}: รองรับเฉพาะ .psd และ .psb`, "bad"); continue; }
+    setStatus(`กำลังอ่าน ${f.name}…`);
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      const buf = await f.arrayBuffer();
+      const psd = agPsd.readPsd(buf, { skipThumbnail: true });
+      const d = fromPsd(psd, f.name, f.size, ext);
+      S.docs.push(d); S.active = S.docs.length - 1; S.selected = null; S.fit = true;
+      setStatus(`เปิด ${f.name} แล้ว`, "ok");
+    } catch (e) {
+      console.error(e);
+      setStatus(`อ่าน ${f.name} ไม่ได้: ${e && e.message ? e.message : e}. ลองบันทึกใหม่จาก Photoshop โดยเปิด "Maximize Compatibility"`, "bad");
+    }
+  }
+  renderAll();
+}
+function fromPsd(psd, name, size, ext) {
+  const ri = psd.imageResources && psd.imageResources.resolutionInfo;
+  let dpi = ri ? ri.horizontalResolution : 72;
+  if (ri && ri.horizontalResolutionUnit === "PPCM") dpi = dpi * 2.54;
+  const d = { name, size, ext, width: psd.width, height: psd.height, dpi: Math.round(dpi) || 72,
+    colorMode: COLOR_MODE[psd.colorMode] || "?", bits: psd.bitsPerChannel || 8,
+    composite: psd.canvas || null, nodes: buildNodes(psd.children, null), sample: false };
+  // files saved without "Maximize Compatibility" carry a blank composite: rebuild it from the layers
+  if (!d.composite || isBlank(d.composite)) d.composite = compositeOf(d);
+  setDefaultChecks(d);
+  return d;
+}
+function isBlank(c) {
+  const t = makeCanvas(24, 24), g = t.getContext("2d"); g.drawImage(c, 0, 0, 24, 24);
+  const p = g.getImageData(0, 0, 24, 24).data;
+  for (let i = 4; i < p.length; i += 4) if (p[i] !== p[0] || p[i + 1] !== p[1] || p[i + 2] !== p[2] || p[i + 3] !== p[3]) return false;
+  return true;
+}
+function compositeOf(d) {
+  const c = makeCanvas(d.width, d.height);
+  drawTree(c.getContext("2d"), d.nodes, 1, { respectHidden: true, useOpacity: true, blend: true }, 1);
+  return c;
+}
+function showAiNote(name) {
+  const box = $("#fileNote"); box.replaceChildren(el("div", { class: "note warn" },
+    el("strong", { text: `${name}: ไฟล์ .ai แยก layer ในเบราว์เซอร์ไม่ได้` }), el("br"),
+    "ใน Illustrator ไปที่ File → Export → Export As… เลือก Photoshop (.psd) ติ๊ก Write Layers แล้วนำ .psd มาใช้ที่นี่ หรือใช้คำสั่ง /export-ai-layers ใน Claude Code"));
+}
+
+/* ---------- sample document (shown until the person opens a file) ---------- */
+function sampleDoc() {
+  const W = 1080, H = 1080;
+  const layer = (name, w, h, x, y, paint, extra = {}) => { const c = makeCanvas(w, h); paint(c.getContext("2d"), w, h); return Object.assign({ name, canvas: c, left: x, top: y }, extra); };
+  const bg = layer("BG Gradient", W, H, 0, 0, (g, w, h) => { const gr = g.createLinearGradient(0, 0, w, h); gr.addColorStop(0, "#f1ecff"); gr.addColorStop(1, "#c9b8f2"); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
+  const petals = layer("Petals", W, H, 0, 0, g => { const pts = [[120,170,38],[930,140,30],[980,520,44],[90,700,34],[300,950,28],[860,930,40],[700,90,22],[200,420,20]]; pts.forEach(([x,y,r],i) => { g.save(); g.translate(x,y); g.rotate(i*0.9); g.fillStyle = i%2 ? "#b49bea" : "#9a7fe0"; g.globalAlpha = .85; g.beginPath(); g.ellipse(0,0,r,r*.5,0,0,Math.PI*2); g.fill(); g.restore(); }); });
+  const circle = layer("Circle", 560, 560, 380, 170, (g, w) => { g.strokeStyle = "rgba(255,255,255,.9)"; g.lineWidth = 6; g.beginPath(); g.arc(w/2, w/2, w/2-6, 0, Math.PI*2); g.stroke(); });
+  const podium = layer("Podium", 560, 210, 380, 790, (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "#ffffff"); gr.addColorStop(1, "#ddd3f5"); g.fillStyle = gr; g.fillRect(20, 60, w-40, h-90); g.beginPath(); g.ellipse(w/2, 60, w/2-20, 50, 0, 0, Math.PI*2); g.fillStyle = "#fbf9ff"; g.fill(); g.beginPath(); g.ellipse(w/2, h-30, w/2-20, 30, 0, 0, Math.PI); g.fillStyle = "#d4c7f1"; g.fill(); });
+  const shadow = layer("Shadow", 300, 60, 510, 818, (g, w, h) => { const gr = g.createRadialGradient(w/2, h/2, 4, w/2, h/2, w/2); gr.addColorStop(0, "rgba(40,20,90,.45)"); gr.addColorStop(1, "rgba(40,20,90,0)"); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
+  const bottle = layer("Bottle", 210, 520, 555, 330, (g, w, h) => {
+    g.fillStyle = "#2b2140"; g.fillRect(80, 0, 50, 70); g.fillStyle = "#1c1530"; g.fillRect(60, 70, 90, 60);
+    const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, "#5b3fae"); gr.addColorStop(.5, "#8f6fe4"); gr.addColorStop(1, "#4a3296");
+    g.fillStyle = gr; g.beginPath(); g.roundRect(10, 130, w-20, h-140, 26); g.fill();
+    g.fillStyle = "rgba(255,255,255,.18)"; g.fillRect(30, 150, 18, h-180);
+    g.fillStyle = "#f4efff"; g.textAlign = "center"; g.font = "600 30px Georgia,serif"; g.fillText("GLOW", w/2, 300); g.fillText("SERUM", w/2, 336);
+  });
+  const txt = (name, s, size, weight, x, y, color, family = "Georgia,serif") => layer(name, 520, Math.ceil(size * 1.35), x, y, g => { g.fillStyle = color; g.font = `${weight} ${size}px ${family}`; g.textBaseline = "top"; g.fillText(s, 0, 0); }, { text: { text: s } });
+  const badge = layer("NEW", 96, 96, 80, 150, g => { g.fillStyle = "#6c4fd1"; g.beginPath(); g.arc(48, 48, 46, 0, Math.PI*2); g.fill(); g.fillStyle = "#fff"; g.font = "700 24px system-ui,sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("NEW", 48, 50); }, { text: { text: "NEW" } });
+  const shop = layer("SHOP NOW", 210, 64, 80, 600, g => { g.fillStyle = "#8a6fe0"; g.beginPath(); g.roundRect(0, 0, 210, 64, 8); g.fill(); g.fillStyle = "#fff"; g.font = "600 22px system-ui,sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("SHOP NOW", 105, 33); }, { text: { text: "SHOP NOW" } });
+  const logo = layer("Lumen mark", 220, 50, 80, 70, g => { g.fillStyle = "#4b3a8f"; g.font = "600 30px Georgia,serif"; g.textBaseline = "top"; g.fillText("lumen·lab", 0, 6); });
+  // ag-psd order is bottom→top
+  const psdLike = { width: W, height: H, children: [
+    { name: "BG Elements", opened: false, children: [bg, podium, circle, petals] },
+    { name: "Product", children: [shadow, bottle] },
+    { name: "Text", children: [
+      txt("For all skin types", "For all skin types", 26, 400, 80, 520, "#5d4f86", "system-ui,sans-serif"),
+      txt("Hydrate. Brighten. Renew", "Hydrate. Brighten. Renew", 30, 400, 80, 450, "#5d4f86", "system-ui,sans-serif"),
+      txt("GLOW SERUM", "GLOW", 104, 600, 80, 220, "#3a2b78"),
+      Object.assign(txt("SERUM", "SERUM", 104, 600, 80, 330, "#3a2b78")),
+      shop, badge ] },
+    { name: "Logo", children: [logo] }
+  ] };
+  // keep the two headline words as one text layer for the sample
+  const t = psdLike.children[2].children; t.splice(2, 2, layer("GLOW SERUM", 520, 250, 80, 220, g => { g.fillStyle = "#3a2b78"; g.font = "600 104px Georgia,serif"; g.textBaseline = "top"; g.fillText("GLOW", 0, 0); g.fillText("SERUM", 0, 112); }, { text: { text: "GLOW SERUM" } }));
+  const d = { name: "ตัวอย่าง_Serum_Post.psd", size: 0, ext: "psd", width: W, height: H, dpi: 72, colorMode: "RGB", bits: 8, composite: null, nodes: buildNodes(psdLike.children, null), sample: true };
+  d.composite = compositeOf(d);
+  setDefaultChecks(d);
+  return d;
+}
+
+/* ---------- UI: files ---------- */
+function renderFiles() {
+  const box = $("#fileList"); box.replaceChildren();
+  S.docs.forEach((d, i) => {
+    const b = el("button", { class: "file", type: "button", "aria-current": i === S.active ? "true" : "false", onclick: () => { S.active = i; S.selected = null; S.fit = true; renderAll(); } },
+      el("span", { class: "ftag", text: d.ext.toUpperCase() }),
+      el("span", { class: "meta" }, el("span", { class: "name", text: d.name }), el("span", { class: "sub", text: d.sample ? "ไฟล์ตัวอย่าง" : `${d.width}×${d.height} · ${fmtBytes(d.size)}` })),
+      el("span", { class: "x", role: "button", tabindex: "0", "aria-label": `เอา ${d.name} ออก`, text: "✕", onclick: e => { e.stopPropagation(); removeDoc(i); } })
+    );
+    box.append(b);
+  });
+  const d = doc();
+  if (d && d.sample) $("#fileNote").replaceChildren(el("div", { class: "note info" }, el("span", { class: "badge", text: "ตัวอย่าง" }), " ไฟล์นี้สร้างขึ้นเพื่อสาธิต เปิดไฟล์ของคุณเองแล้วไฟล์ตัวอย่างจะหายไป"));
+  else if (!$("#fileNote").querySelector(".warn")) $("#fileNote").replaceChildren();
+}
+function removeDoc(i) { S.docs.splice(i, 1); S.active = Math.min(S.active, S.docs.length - 1); S.selected = null; renderAll(); }
+
+/* ---------- UI: stage ---------- */
+let stageCanvas = null;
+function renderStage() {
+  const vp = $("#viewport"), d = doc();
+  if (!d) { vp.replaceChildren(el("div", { class: "empty-state" }, el("strong", { text: "ยังไม่มีไฟล์" }), "เลือกไฟล์ .psd หรือ .psb เพื่อเริ่ม")); $("#zVal").textContent = "—"; return; }
+  if (!stageCanvas || stageCanvas._doc !== d) {
+    stageCanvas = makeCanvas(d.width, d.height); stageCanvas._doc = d;
+    stageCanvas.getContext("2d").drawImage(d.composite, 0, 0, d.width, d.height);
+  }
+  const art = el("div", { class: "art" }); art.append(stageCanvas);
+  const sel = S.selected && findNode(d, S.selected);
+  if (sel) { const b = nodeBounds(sel); if (b) { const hl = el("div", { class: "hl" }, el("span", { text: sel.name })); Object.assign(hl.style, { left: b.x / d.width * 100 + "%", top: b.y / d.height * 100 + "%", width: b.w / d.width * 100 + "%", height: b.h / d.height * 100 + "%" }); art.append(hl); } }
+  vp.replaceChildren(art);
+  applyZoom();
+}
+function applyZoom() {
+  const d = doc(); const art = $("#viewport .art"); if (!d || !art) return;
+  if (S.fit) { const vp = $("#viewport"); const aw = vp.clientWidth - 36, ah = Math.max(320, vp.clientHeight - 36); S.zoom = Math.min(aw / d.width, ah / d.height, 1); }
+  art.style.width = d.width * S.zoom + "px"; art.style.height = d.height * S.zoom + "px";
+  $("#zVal").textContent = Math.round(S.zoom * 100) + "%";
+}
+function nodeBounds(n) {
+  if (n.kind === "group") { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; walk(n.children, c => { if (c.canvas && c.kind !== "group" && c.kind !== "empty") { x0 = Math.min(x0, c.left); y0 = Math.min(y0, c.top); x1 = Math.max(x1, c.left + c.canvas.width); y1 = Math.max(y1, c.top + c.canvas.height); } }); return x1 > x0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null; }
+  return n.canvas ? { x: n.left, y: n.top, w: n.canvas.width, h: n.canvas.height } : null;
+}
+function findNode(d, id) { let f = null; walk(d.nodes, n => { if (n.id === id) f = n; }); return f; }
+
+function renderInfo() {
+  const d = doc(), box = $("#info");
+  if (!d) { box.replaceChildren(); return; }
+  let layers = 0, groups = 0, texts = 0, empties = 0, hidden = 0;
+  walk(d.nodes, n => { if (n.kind === "group") groups++; else { layers++; if (n.kind === "text") texts++; if (n.kind === "empty") empties++; } if (n.hidden) hidden++; });
+  const row = (k, v) => [el("dt", { text: k }), el("dd", { text: v })];
+  box.replaceChildren(
+    el("dl", {}, row("ไฟล์", d.name), row("ขนาดไฟล์", d.sample ? "—" : fmtBytes(d.size)), row("Canvas", `${d.width} × ${d.height} px`), row("ความละเอียด", `${d.dpi} DPI`), row("โหมดสี", `${d.colorMode} · ${d.bits}-bit`), row("Layer", `${layers} (ข้อความ ${texts}, ว่าง/adjustment ${empties})`), row("Group", String(groups)), row("ปิดตาอยู่", String(hidden))),
+    el("h3", { text: "ข้อจำกัด" }),
+    el("ul", {}, el("li", { text: "Layer Style (เงา, stroke, glow) และ mask ไม่ถูก render ได้ภาพ pixel ของ layer อย่างเดียว" }), el("li", { text: "Adjustment layer และ layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
+  );
+}
+
+/* ---------- UI: tree ---------- */
+function thumbFor(n) {
+  const box = el("span", { class: "thumb" });
+  if (n.kind === "group") { box.innerHTML = ICON.folder; return box; }
+  if (n.kind === "empty") { box.innerHTML = ICON.adj; return box; }
+  const s = 28 / Math.max(n.canvas.width, n.canvas.height);
+  const c = makeCanvas(n.canvas.width * s, n.canvas.height * s); const g = c.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(n.canvas, 0, 0, c.width, c.height);
+  box.append(c); return box;
+}
+function renderTree() {
+  const d = doc(), tree = $("#tree"); tree.replaceChildren();
+  if (!d) { $("#layerCount").textContent = "0 layers"; $("#selSum").textContent = ""; return; }
+  const q = $("#search").value.trim().toLowerCase();
+  const matches = n => !q || n.name.toLowerCase().includes(q) || (n.kind === "group" && n.children.some(matches));
+  const build = (nodes, depth) => {
+    const ul = depth ? el("ul", { role: "group" }) : document.createDocumentFragment();
+    for (const n of nodes) {
+      if (!matches(n)) continue;
+      const li = el("li", { role: "treeitem", "aria-expanded": n.kind === "group" ? String(n.expanded || !!q) : false });
+      const cb = el("input", { type: "checkbox", "aria-label": `ส่งออก ${n.name}` });
+      const usable = hasContent(n);
+      if (n.kind === "group") { const all = []; walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) all.push(c.checked); }); cb.checked = all.length && all.every(Boolean); cb.indeterminate = !cb.checked && all.some(Boolean); }
+      else cb.checked = n.checked;
+      cb.disabled = !usable;
+      cb.addEventListener("change", () => { const v = cb.checked; if (n.kind === "group") walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) c.checked = v; }); else n.checked = v; renderTree(); renderOutInfo(); });
+      const tw = el("button", { class: "twisty" + (n.kind === "group" ? "" : " none"), type: "button", "aria-label": n.expanded ? "ยุบ" : "ขยาย", "aria-expanded": String(n.expanded || !!q) });
+      tw.innerHTML = ICON.chev;
+      tw.addEventListener("click", () => { n.expanded = !n.expanded; renderTree(); });
+      const name = el("span", { class: "lname", text: n.name, title: n.name, onclick: () => { S.selected = S.selected === n.id ? null : n.id; renderTree(); renderStage(); } });
+      const tag = n.kind === "text" ? "T" : n.kind === "empty" ? (n.adjustment ? "adj" : "ว่าง") : n.opacity < 1 ? Math.round(n.opacity * 100) + "%" : "";
+      const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (effHidden(n) || !usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
+        tw, cb, thumbFor(n), name, tag ? el("span", { class: "ltag", text: tag }) : null);
+      if (n.hidden) { const e = el("span", { class: "eye", title: "ปิดตาอยู่ใน Photoshop" }); e.innerHTML = ICON.eyeOff; row.append(e); }
+      li.append(row);
+      if (n.kind === "group" && (n.expanded || q)) li.append(build(n.children, depth + 1));
+      ul.append(li);
+    }
+    return ul;
+  };
+  tree.append(build(d.nodes, 0));
+  let total = 0, picked = 0; walk(d.nodes, n => { if (n.kind !== "group") { total++; if (n.checked) picked++; } });
+  $("#layerCount").textContent = `${total} layers`;
+  $("#selSum").textContent = `เลือก ${picked}/${total}`;
+}
+
+/* ---------- UI: settings ---------- */
+function renderOutInfo() {
+  const d = doc(), st = settings();
+  if (!d) { $("#outInfo").textContent = "—"; $("#dpiHint").textContent = ""; return; }
+  const W = Math.round(d.width * st.scale), H = Math.round(d.height * st.scale);
+  $("#dpiHint").textContent = st.scale === 1 ? `ไฟล์ต้นฉบับ ${d.srcDpi || d.dpi} DPI · ${d.width}×${d.height} px` : `ขยาย ${st.scale.toFixed(2)}× จาก ${d.dpi} DPI → canvas ${W}×${H} px` + (st.scale > 1 ? " (ภาพอาจแตกถ้าต้นฉบับละเอียดไม่พอ)" : "");
+  const p = plan(d, st);
+  const folders = new Set(p.map(i => i.path.split("/").slice(0, -1).join("/")).filter(Boolean));
+  const zip = zipName(d);
+  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), `${p.length} ไฟล์ PNG` + (folders.size ? ` · ${folders.size} โฟลเดอร์` : ""), el("br"), st.trim ? "ขนาดตามเนื้อภาพ (trim)" : `ทุกไฟล์ ${W}×${H} px`);
+  $("#splitBtn").disabled = $("#previewBtn").disabled = !p.length;
+}
+const zipName = d => d.name.replace(/\.(psd|psb)$/i, "") + "_PNG_Export.zip";
+
+/* ---------- export ---------- */
+function setStatus(msg, kind) { const s = $("#status"); s.textContent = msg; s.className = "status" + (kind ? " " + kind : ""); }
+function setProg(f) { const p = $("#prog"); p.hidden = f == null; p.firstElementChild.style.width = (f || 0) * 100 + "%"; }
+const toBlob = c => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("toBlob failed")), "image/png"));
+let busy = false;
+
+async function renderPlan(onItem) {
+  const d = doc(), st = settings(), p = plan(d, st), out = [];
+  for (let i = 0; i < p.length; i++) {
+    const c = renderNode(d, p[i].node, st);
+    if (c) out.push({ path: p[i].path, canvas: c, node: p[i].node });
+    setProg((i + 1) / p.length);
+    if (onItem) await onItem(i, p.length);
+    if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
+  }
+  return out;
+}
+
+async function doSplit() {
+  if (busy || !doc()) return; busy = true; $("#splitBtn").disabled = true;
+  try {
+    const d = doc();
+    setStatus("กำลังแยก layer…"); setProg(0);
+    const files = await renderPlan();
+    setStatus("กำลังรวมเป็น ZIP…");
+    const zip = new JSZip();
+    for (const f of files) zip.file(f.path, await toBlob(f.canvas));
+    const blob = await zip.generateAsync({ type: "blob", compression: "STORE" }, m => setProg(m.percent / 100));
+    window.__lastZip = blob; // used by automated checks
+    const name = zipName(d);
+    if (!downloads && !window.claude) { // opened as a plain file (e.g. from Google Drive): normal browser download
+      const a = el("a", { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); a.remove();
+      setStatus(`ดาวน์โหลด ${name} แล้ว · ${files.length} ไฟล์ · ${fmtBytes(blob.size)}`, "ok"); return;
+    }
+    if (!downloads) { setStatus(`ได้ ${files.length} ไฟล์ (${fmtBytes(blob.size)}) แต่หน้านี้บันทึกไฟล์ไม่ได้ ลองเปิดใน claude.ai`, "bad"); return; }
+    try { await downloads.save({ filename: name, data: blob }); setStatus(`บันทึก ${name} แล้ว · ${files.length} ไฟล์ · ${fmtBytes(blob.size)}`, "ok"); }
+    catch (e) { setStatus(e && e.code === "declined" ? "ยกเลิกการบันทึกแล้ว" : e && e.code === "rate_limited" ? "มีหน้าต่างบันทึกเปิดอยู่ ลองอีกครั้งในอีกสักครู่" : "บันทึกไฟล์ในหน้านี้ไม่ได้", e && e.code === "declined" ? "" : "bad"); }
+  } catch (e) { console.error(e); setStatus("แยก layer ไม่สำเร็จ: " + (e.message || e), "bad"); }
+  finally { busy = false; setProg(null); renderOutInfo(); }
+}
+
+async function doPreview() {
+  if (busy || !doc()) return; busy = true;
+  try {
+    setStatus("กำลังสร้างตัวอย่าง…"); setProg(0);
+    const files = await renderPlan();
+    const grid = $("#dlgGrid"); grid.replaceChildren();
+    for (const f of files) {
+      const url = URL.createObjectURL(await toBlob(f.canvas));
+      grid.append(el("figure", { class: "card", style: "margin:0" }, el("div", { class: "pic" }, el("img", { src: url, alt: f.node.name, loading: "lazy" })), el("figcaption", { class: "cap" }, el("span", { class: "fn", text: f.path }), el("span", { class: "dim", text: `${f.node.name} · ${f.canvas.width}×${f.canvas.height}` }))));
+    }
+    $("#dlgCount").textContent = `${files.length} ไฟล์`;
+    $("#dlg").showModal(); setStatus("");
+  } catch (e) { console.error(e); setStatus("สร้างตัวอย่างไม่สำเร็จ: " + (e.message || e), "bad"); }
+  finally { busy = false; setProg(null); }
+}
+
+/* ---------- wiring ---------- */
+function renderAll() { renderFiles(); renderStage(); renderInfo(); renderTree(); renderOutInfo(); showTab(S.tab); }
+function showTab(t) { S.tab = t; $("#tabPreview").setAttribute("aria-selected", t === "preview"); $("#tabInfo").setAttribute("aria-selected", t === "info"); $("#viewport").style.display = t === "preview" ? "" : "none"; $("#info").style.display = t === "info" ? "block" : "none"; $("#zoomBox").style.visibility = t === "preview" ? "" : "hidden"; if (t === "preview") applyZoom(); }
+
+$("#tabPreview").onclick = () => showTab("preview");
+$("#tabInfo").onclick = () => showTab("info");
+$("#zIn").onclick = () => { S.fit = false; S.zoom = Math.min(4, S.zoom * 1.25); applyZoom(); };
+$("#zOut").onclick = () => { S.fit = false; S.zoom = Math.max(0.05, S.zoom / 1.25); applyZoom(); };
+$("#zFit").onclick = () => { S.fit = true; applyZoom(); };
+window.addEventListener("resize", () => { if (S.fit) applyZoom(); });
+$("#browseBtn").onclick = $("#addBtn").onclick = () => $("#fileInput").click();
+$("#fileInput").onchange = e => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) { dropSample(); addFiles(fs); } };
+const drop = $("#drop");
+["dragenter", "dragover"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === document.documentElement) drop.classList.remove("over"); }));
+document.addEventListener("drop", e => { const fs = [...(e.dataTransfer && e.dataTransfer.files || [])]; if (fs.length) { dropSample(); addFiles(fs); } });
+function dropSample() { const i = S.docs.findIndex(d => d.sample); if (i >= 0) { S.docs.splice(i, 1); S.active = S.docs.length - 1; } }
+$("#search").oninput = renderTree;
+$("#selAll").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { if (n.kind !== "group") n.checked = hasContent(n); }); renderTree(); renderOutInfo(); };
+$("#selNone").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { n.checked = false; }); renderTree(); renderOutInfo(); };
+$("#selVisible").onclick = () => { const d = doc(); if (!d) return; setDefaultChecks(d); renderTree(); renderOutInfo(); };
+["dpi", "trim", "opacity"].forEach(id => $("#" + id).addEventListener("change", renderOutInfo));
+document.querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", renderOutInfo));
+$("#transparent").addEventListener("change", () => { $("#bgRow").hidden = $("#transparent").checked; renderOutInfo(); });
+$("#splitBtn").onclick = doSplit;
+$("#previewBtn").onclick = doPreview;
+$("#dlgClose").onclick = () => $("#dlg").close();
+$("#dlg").addEventListener("close", () => $("#dlgGrid").querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src)));
+
+if (typeof agPsd === "undefined" || typeof JSZip === "undefined") setStatus("โหลดไลบรารีไม่สำเร็จ ตรวจการเชื่อมต่ออินเทอร์เน็ตแล้วเปิดหน้านี้ใหม่", "bad");
+S.docs.push(sampleDoc()); S.active = 0;
+renderAll();
+window.__ls = { S, plan, settings, addFiles };
+})();
+</script>
+
+</body></html>
