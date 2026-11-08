@@ -303,7 +303,7 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
       <span class="lbl">ภาพ</span>
       <label class="checkrow"><input type="checkbox" id="transparent" checked><span>พื้นหลังโปร่งใส</span></label>
       <div class="colorrow" id="bgRow" hidden><input type="color" id="bgColor" value="#ffffff" aria-label="สีพื้นหลัง"><span>สีพื้นหลัง</span></div>
-      <label class="checkrow"><input type="checkbox" id="fx" checked><span>Export Layer Style<small>Drop Shadow, Stroke, Outer Glow, Color Overlay</small></span></label>
+      <label class="checkrow"><input type="checkbox" id="fx" checked><span>Export Layer Style<small>Drop Shadow, Inner Shadow, Stroke, Outer Glow, Color Overlay, Bevel &amp; Emboss</small></span></label>
       <div class="hint" id="fxHint"></div>
       <div class="hint" id="adjHint"></div>
     </div>
@@ -761,15 +761,22 @@ const adjOnVisible = a => !effHidden(a);
 
 /* ---------- Layer Style (Drop Shadow, Outer Glow, Color Overlay, Stroke) ---------- */
 let currentAngle = 30;   // global light of the document being built
-const FX_OTHER = { innerShadow: "Inner Shadow", innerGlow: "Inner Glow", bevel: "Bevel & Emboss", satin: "Satin", gradientOverlay: "Gradient Overlay", patternOverlay: "Pattern Overlay" };
+const FX_OTHER = { innerGlow: "Inner Glow", satin: "Satin", gradientOverlay: "Gradient Overlay", patternOverlay: "Pattern Overlay" };
 const fxOn = e => !!e && e.enabled !== false;
 const fxList = v => (Array.isArray(v) ? v : v ? [v] : []).filter(fxOn);
 const fxPx = (u, k) => (u && u.value ? u.value : 0) * k;
-function fxAny(fx) { return ["dropShadow", "outerGlow", "solidFill", "stroke", ...Object.keys(FX_OTHER)].some(key => fxList(fx[key]).length); }
+function fxAny(fx) { return ["dropShadow", "outerGlow", "solidFill", "stroke", "innerShadow", "bevel", ...Object.keys(FX_OTHER)].some(key => fxList(fx[key]).length); }
 function fxUnsupported(fx) {
   const out = Object.keys(FX_OTHER).filter(key => fxList(fx[key]).length).map(key => FX_OTHER[key]);
   if (fxList(fx.stroke).some(s => s.fillType && s.fillType !== "color")) out.push("Stroke แบบ gradient/pattern");
-  return out;
+  // the parts of Bevel & Emboss that are drawn with plain defaults instead
+  for (const b of fxList(fx.bevel)) {
+    if (b.useTexture) out.push("Texture ของ Bevel");
+    if (b.technique && b.technique !== "smooth") out.push("Bevel แบบ Chisel (ใช้แบบ Smooth แทน)");
+    if (b.style === "stroke emboss") out.push("Stroke Emboss");
+    if (b.contour && b.contour.name && !/linear/i.test(b.contour.name)) out.push("Gloss Contour ของ Bevel");
+  }
+  return [...new Set(out)];
 }
 function fxColor(c) {
   if (c && "fr" in c) return `rgb(${Math.round(c.fr * 255)},${Math.round(c.fg * 255)},${Math.round(c.fb * 255)})`;
@@ -800,8 +807,11 @@ function distField(mask, w, h) {
 function applyFx(src, fx, k, angle, fill) {
   const sc = (fx.scale || 1) * k;
   const ds = fxList(fx.dropShadow), og = fxList(fx.outerGlow), sf = fxList(fx.solidFill), sk = fxList(fx.stroke).filter(s => !s.fillType || s.fillType === "color");
-  if (!ds.length && !og.length && !sf.length && !sk.length) return null;
+  const is = fxList(fx.innerShadow), bv = fxList(fx.bevel).filter(b => b.style !== "stroke emboss");
+  if (!ds.length && !og.length && !sf.length && !sk.length && !is.length && !bv.length) return null;
   let pad = 2;
+  is.forEach(e => { pad = Math.max(pad, fxPx(e.size, sc) * 1.5 + fxPx(e.distance, sc)); });
+  bv.forEach(e => { if (e.style && e.style !== "inner bevel") pad = Math.max(pad, fxPx(e.size, sc) + fxPx(e.soften, sc)); });
   ds.forEach(e => { pad = Math.max(pad, fxPx(e.size, sc) * 1.5 + fxPx(e.distance, sc)); });
   og.forEach(e => { pad = Math.max(pad, fxPx(e.size, sc) * 1.5); });
   sk.forEach(e => { if (e.position !== "inside") pad = Math.max(pad, fxPx(e.size, sc)); });
@@ -821,7 +831,7 @@ function applyFx(src, fx, k, angle, fill) {
     if (spread >= 0.5) { const d = outside(); return paint(i => Math.max(0, Math.min(1, spread + 1 - d[i])), color); }
     const c = makeCanvas(W, H), cg = c.getContext("2d"); cg.drawImage(base, 0, 0); cg.globalCompositeOperation = "source-in"; cg.fillStyle = color; cg.fillRect(0, 0, W, H); return c;
   };
-  const blur = (c, r) => { if (r < 0.5) return c; const b = makeCanvas(W, H), bg = b.getContext("2d"); bg.filter = `blur(${(r / 2).toFixed(2)}px)`; bg.drawImage(c, 0, 0); return b; };
+  const blur = (c, r) => { if (r < 0.5) return c; const b = makeCanvas(W, H), bg = b.getContext("2d"); bg.filter = `blur(${(r / 2).toFixed(2)}px)`; bg.drawImage(c, 0, 0); bg.filter = "none"; return b; };
   const spreadOf = (e, size) => size * Math.min(100, Math.max(0, e.choke ? e.choke.value : 0)) / 100;
 
   const out = makeCanvas(W, H), g = out.getContext("2d");
@@ -843,6 +853,19 @@ function applyFx(src, fx, k, angle, fill) {
     bg.restore();
   });
   g.save(); g.globalAlpha = fill == null ? 1 : fill; g.drawImage(body, 0, 0); g.restore();
+  const lightOf = e => ((e.useGlobalLight !== false && angle != null) ? angle : (e.angle == null ? 120 : e.angle)) * Math.PI / 180;
+  // inner shadows: the outside of the shape, choked, blurred, shifted, and kept inside the shape
+  is.forEach(e => {
+    const size = fxPx(e.size, sc), spread = spreadOf(e, size), dist = fxPx(e.distance, sc), a = lightOf(e), color = fxColor(e.color);
+    // the (choked) shape, shifted away from the light; everything outside it becomes shadow colour
+    let shape = base;
+    if (spread >= 0.5) { const dI = inside(), al = getAlpha(); shape = paint(i => al[i] ? Math.max(0, Math.min(1, dI[i] - spread)) : 0, "rgb(0,0,0)"); }
+    const inv = makeCanvas(W, H), ig = inv.getContext("2d");
+    ig.fillStyle = color; ig.fillRect(0, 0, W, H); ig.globalCompositeOperation = "destination-out"; ig.drawImage(shape, -Math.cos(a) * dist, Math.sin(a) * dist);
+    const sh = blur(inv, size - spread), sg = sh.getContext("2d");
+    sg.globalCompositeOperation = "destination-in"; sg.drawImage(base, 0, 0);
+    put(sh, e, 0, 0, 0.75, "multiply");
+  });
   // strokes on top
   sk.forEach(e => {
     const size = fxPx(e.size, sc); if (size <= 0) return;
@@ -850,6 +873,46 @@ function applyFx(src, fx, k, angle, fill) {
     const dO = o > 0 ? outside() : null, dI = i_ > 0 ? inside() : null, al = getAlpha();
     const ring = paint(i => al[i] ? (dI ? Math.max(0, Math.min(1, i_ + 1 - dI[i])) : 0) : (dO ? Math.max(0, Math.min(1, o + 1 - dO[i])) : 0), fxColor(e.color));
     put(ring, e, 0, 0, 1, "normal");
+  });
+  // Bevel & Emboss on top: a height map built from the distance to the edge, lit from the light angle
+  bv.forEach(e => {
+    const size = Math.max(1, fxPx(e.size, sc)), soften = fxPx(e.soften, sc), depth = (e.strength == null ? 100 : e.strength) / 100;
+    const style = e.style || "inner bevel", down = e.direction === "down", al = getAlpha(), dI = inside(), dO = style === "inner bevel" ? null : outside();
+    const ease = t => { t = t < 0 ? 0 : t > 1 ? 1 : t; return 1 - (1 - t) * (1 - t); };   // rounded "smooth" profile
+    const hgt = new Float32Array(W * H), half = size / 2;
+    for (let i = 0; i < W * H; i++) {
+      let v;
+      if (style === "outer bevel") v = al[i] ? 1 : 1 - ease(dO[i] / size) ;
+      else if (style === "emboss") v = al[i] ? .5 + .5 * ease(dI[i] / half) : .5 - .5 * ease(dO[i] / half);
+      else if (style === "pillow emboss") v = al[i] ? ease(dI[i] / half) : ease(dO[i] / half);
+      else v = al[i] ? ease(dI[i] / size) : 0;
+      hgt[i] = down ? 1 - v : v;
+    }
+    // soften: box-blur the height map (two passes ≈ gaussian)
+    const r = Math.max(1, Math.round(soften / 2));   // at least a light blur so the stair-stepped edge does not streak the light
+    for (let pass = 0; pass < 2; pass++) {
+      const tmp = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) { let acc = 0; const row = y * W; for (let x = -r; x <= r; x++) acc += hgt[row + Math.min(W - 1, Math.max(0, x))];
+        for (let x = 0; x < W; x++) { tmp[row + x] = acc / (2 * r + 1); acc += hgt[row + Math.min(W - 1, x + r + 1)] - hgt[row + Math.max(0, x - r)]; } }
+      for (let x = 0; x < W; x++) { let acc = 0; for (let y = -r; y <= r; y++) acc += tmp[Math.min(H - 1, Math.max(0, y)) * W + x];
+        for (let y = 0; y < H; y++) { hgt[y * W + x] = acc / (2 * r + 1); acc += tmp[Math.min(H - 1, y + r + 1) * W + x] - tmp[Math.max(0, y - r) * W + x]; } }
+    }
+    const az = lightOf(e), alt = (e.altitude == null ? 30 : e.altitude) * Math.PI / 180;
+    const Lx = Math.cos(alt) * Math.cos(az), Ly = -Math.cos(alt) * Math.sin(az), Lz = Math.sin(alt), flat = Lz;
+    const zs = size * depth;   // height of the bevel in pixels
+    const hi = new Float32Array(W * H), lo = new Float32Array(W * H);
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      const inArea = style === "inner bevel" ? al[i] : style === "outer bevel" ? !al[i] && dO[i] <= size + soften : al[i] || dO[i] <= half + soften;
+      if (!inArea) continue;
+      const gx = (hgt[i + 1] - hgt[i - 1]) / 2 * zs, gy = (hgt[i + W] - hgt[i - W]) / 2 * zs;
+      const nl = Math.hypot(gx, gy, 1), sdot = (-gx * Lx - gy * Ly + Lz) / nl;
+      if (sdot > flat) hi[i] = (sdot - flat) / (1 - flat); else lo[i] = (flat - sdot) / flat;
+    }
+    const hc = { opacity: e.highlightOpacity == null ? .75 : e.highlightOpacity, blendMode: e.highlightBlendMode || "screen" };
+    const lc = { opacity: e.shadowOpacity == null ? .75 : e.shadowOpacity, blendMode: e.shadowBlendMode || "multiply" };
+    put(paint(i => hi[i], e.highlightColor ? fxColor(e.highlightColor) : "rgb(255,255,255)"), hc, 0, 0, .75, "screen");
+    put(paint(i => lo[i], e.shadowColor ? fxColor(e.shadowColor) : "rgb(0,0,0)"), lc, 0, 0, .75, "multiply");
   });
   return { canvas: out, pad };
 }
@@ -1231,7 +1294,7 @@ function renderInfo() {
   box.replaceChildren(
     el("dl", {}, row("ไฟล์", d.name), row("ขนาดไฟล์", d.sample ? "—" : fmtBytes(d.size)), row("Canvas", `${d.width} × ${d.height} px`), row("ความละเอียด", `${d.dpi} DPI`), row("โหมดสี", `${d.colorMode} · ${d.bits}-bit`), row("Layer", `${layers} (ข้อความ ${texts}, ว่าง/adjustment ${empties})`), row("Smart Object", String(sos)), row("มี Layer Style (fx)", String(fxs)), row("Group", String(groups)), row("ปิดตาอยู่", String(hidden))),
     el("h3", { text: "ข้อจำกัด" }),
-    el("ul", {}, el("li", { text: "Layer Style ที่รองรับ: Drop Shadow, Stroke (สีเดียว), Outer Glow, Color Overlay · แบบอื่นและ mask ไม่ถูก render" }), el("li", { text: "Smart Object ความละเอียดเต็มใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked, แบบ vector และแบบที่มี Smart Filter" }), el("li", { text: "Adjustment layer ใช้ได้ทุกแบบยกเว้น Color Lookup, Selective Color, Channel Mixer · ผลอาจต่างจาก Photoshop เล็กน้อย · layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
+    el("ul", {}, el("li", { text: "Layer Style ที่รองรับ: Drop Shadow, Inner Shadow, Stroke (สีเดียว), Outer Glow, Color Overlay, Bevel & Emboss (แบบ Smooth ไม่มี Texture) · แบบอื่นไม่ถูก render" }), el("li", { text: "Smart Object ความละเอียดเต็มใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked, แบบ vector และแบบที่มี Smart Filter" }), el("li", { text: "Adjustment layer ใช้ได้ทุกแบบยกเว้น Color Lookup, Selective Color, Channel Mixer · ผลอาจต่างจาก Photoshop เล็กน้อย · layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
   );
 }
 
