@@ -618,9 +618,12 @@ function renderStage() {
     Object.assign(hl.style, { left: x0 / d.width * 100 + "%", top: y0 / d.height * 100 + "%", width: (x1 - x0) / d.width * 100 + "%", height: (y1 - y0) / d.height * 100 + "%" });
     art.append(hl);
   };
-  // layers that hit a Smart Object limitation, in the same colour as the warning text
-  if (settings().so === "original") walk(d.nodes, n => { if (n.so && n.checked && (n.so.problem || n.so.note)) { const b = nodeBounds(n); if (b) box(b, n.name, "hl alert"); } });
-  if (sel) { const b = nodeBounds(sel); if (b) box(b, sel.name, "hl"); }
+  // only the clicked layer is outlined: orange (same as the warning text) when it hits a Smart Object limitation
+  if (sel) {
+    const b = nodeBounds(sel);
+    const limited = settings().so === "original" && sel.so && (sel.so.problem || sel.so.note);
+    if (b) box(b, sel.name, limited ? "hl alert" : "hl");
+  }
   vp.replaceChildren(art);
   applyZoom();
 }
