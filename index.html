@@ -148,7 +148,7 @@ header .spacer{flex:1}
 .field .hint{color:var(--muted);font-size:12px;line-height:1.45}
 .checkrow{display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer}
 .checkrow input{margin-top:3px;accent-color:var(--accent);width:15px;height:15px;flex:none}
-.checkrow small{display:block;color:var(--muted);font-size:12px}
+.checkrow small{display:block;color:var(--muted);font-size:12px;font-weight:400}
 .radios{display:grid;gap:6px}
 .colorrow{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
 .colorrow input{width:34px;height:26px;border:1px solid var(--line);border-radius:6px;padding:0;background:none}
@@ -250,10 +250,10 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
     </div>
 
     <div class="field" id="soField">
-      <span class="lbl">ขนาด Smart Object</span>
+      <span class="lbl">ขนาดภาพ</span>
       <div class="radios">
-        <label class="checkrow"><input type="radio" name="so" value="canvas" id="soCanvas" checked><span>ตามที่เห็นใน canvas<small>ตัดเฉพาะส่วนที่อยู่ในกรอบงาน</small></span></label>
-        <label class="checkrow"><input type="radio" name="so" value="original" id="soOriginal"><span>ขนาดต้นฉบับ<small>ดึงภาพเต็มความละเอียดจากไฟล์ที่ฝังอยู่ใน Smart Object</small></span></label>
+        <label class="checkrow"><input type="radio" name="so" value="canvas" id="soCanvas" checked><span>ตาม canvas<small>ทุกไฟล์ขนาดเท่า canvas</small></span></label>
+        <label class="checkrow"><input type="radio" name="so" value="original" id="soOriginal"><span>ตามต้นฉบับ<small>ตัดขอบใสออก และ Smart Object ใช้ภาพความละเอียดเต็มที่ฝังอยู่</small></span></label>
       </div>
       <div class="hint" id="soHint"></div>
     </div>
@@ -262,8 +262,8 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
       <span class="lbl">ภาพ</span>
       <label class="checkrow"><input type="checkbox" id="transparent" checked><span>พื้นหลังโปร่งใส</span></label>
       <div class="colorrow" id="bgRow" hidden><input type="color" id="bgColor" value="#ffffff" aria-label="สีพื้นหลัง"><span>สีพื้นหลัง</span></div>
-      <label class="checkrow"><input type="checkbox" id="trim" checked><span>ตัดขอบใสออก (Trim)<small>ปิดไว้ถ้าต้องการให้ทุกไฟล์ขนาดเท่า canvas</small></span></label>
-      <label class="checkrow"><input type="checkbox" id="opacity" checked><span>ใช้ค่า Opacity ของ layer</span></label>
+      <label class="checkrow"><input type="checkbox" id="fx" checked><span>Export Layer Style<small>Drop Shadow, Stroke, Outer Glow, Color Overlay</small></span></label>
+      <div class="hint" id="fxHint"></div>
     </div>
 
     <div class="field">
@@ -338,7 +338,14 @@ function soInfo(L) {
     if (info.kind === "pdf" || p.type === "vector") info.problem = "เป็น Smart Object แบบ vector (.ai / .pdf) ดึงขนาดต้นฉบับไม่ได้ ใช้ภาพตาม canvas แทน";
     else if (info.kind === "tif" || info.kind === "other") info.problem = "ไฟล์ต้นฉบับใน Smart Object เป็นชนิดที่เบราว์เซอร์อ่านไม่ได้ ใช้ภาพตาม canvas แทน";
   }
+  // smart filters live only in the canvas render: the embedded original comes without them
+  const sf = p.filter && p.filter.enabled !== false && (p.filter.list || []).filter(f => f && f.enabled !== false);
+  if (!info.problem && sf && sf.length) {
+    const names = [...new Set(sf.map(f => f.name || f.type).filter(Boolean))].join(", ");
+    info.problem = `มี Smart Filter${names ? " (" + names + ")" : ""} ใช้ภาพตาม canvas แทนเพื่อให้ฟิลเตอร์ติดมาด้วย`;
+  }
   const t = p.transform || [];
+  info.dispW = t.length === 8 ? Math.hypot(t[2] - t[0], t[3] - t[1]) : 0;
   if (t.length === 8) {
     const straight = Math.abs(t[1] - t[3]) < 0.5 && Math.abs(t[2] - t[4]) < 0.5 && Math.abs(t[5] - t[7]) < 0.5 && Math.abs(t[6] - t[0]) < 0.5;
     const flipped = t[2] < t[0] || t[7] < t[1];
@@ -379,8 +386,10 @@ function buildNodes(children, parent) {
       blend: L.blendMode || "normal", left: L.left || 0, top: L.top || 0,
       canvas: L.canvas || null, adjustment: !!L.adjustment, clipping: !!L.clipping,
       expanded: isGroup ? (L.opened !== false) : false, checked: false, children: [],
-      so: isGroup ? null : soInfo(L), fx: !!(L.effects && !L.effects.disabled)
+      so: isGroup ? null : soInfo(L), fx: false, effects: null, fxBad: [],
+      fill: L.fillOpacity == null ? 1 : L.fillOpacity, angle: currentAngle
     };
+    if (!isGroup && L.effects && !L.effects.disabled && fxAny(L.effects)) { n.fx = true; n.effects = L.effects; n.fxBad = fxUnsupported(L.effects); }
     if (isGroup) n.children = buildNodes(L.children, n);
     out.push(n);
   }
@@ -403,14 +412,112 @@ function drawTree(ctx, nodes, scale, opts, alphaMul) {
     const a = alphaMul * (opts.useOpacity ? n.opacity : 1);
     if (n.kind === "group") { drawTree(ctx, n.children, scale, opts, a); continue; }
     if (!n.canvas || n.kind === "empty") continue;
+    let img = n.canvas, off = 0;
+    if (opts.fx && n.effects) { const f = nodeFx(n); if (f) { img = f.canvas; off = f.pad; } }
     ctx.save();
     ctx.globalAlpha = a;
     ctx.globalCompositeOperation = opts.blend ? (BLEND[n.blend] || "source-over") : "source-over";
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(n.canvas, n.left * scale, n.top * scale, n.canvas.width * scale, n.canvas.height * scale);
+    ctx.drawImage(img, (n.left - off) * scale, (n.top - off) * scale, img.width * scale, img.height * scale);
     ctx.restore();
   }
 }
+
+/* ---------- Layer Style (Drop Shadow, Outer Glow, Color Overlay, Stroke) ---------- */
+let currentAngle = 30;   // global light of the document being built
+const FX_OTHER = { innerShadow: "Inner Shadow", innerGlow: "Inner Glow", bevel: "Bevel & Emboss", satin: "Satin", gradientOverlay: "Gradient Overlay", patternOverlay: "Pattern Overlay" };
+const fxOn = e => !!e && e.enabled !== false;
+const fxList = v => (Array.isArray(v) ? v : v ? [v] : []).filter(fxOn);
+const fxPx = (u, k) => (u && u.value ? u.value : 0) * k;
+function fxAny(fx) { return ["dropShadow", "outerGlow", "solidFill", "stroke", ...Object.keys(FX_OTHER)].some(key => fxList(fx[key]).length); }
+function fxUnsupported(fx) {
+  const out = Object.keys(FX_OTHER).filter(key => fxList(fx[key]).length).map(key => FX_OTHER[key]);
+  if (fxList(fx.stroke).some(s => s.fillType && s.fillType !== "color")) out.push("Stroke แบบ gradient/pattern");
+  return out;
+}
+function fxColor(c) {
+  if (c && "fr" in c) return `rgb(${Math.round(c.fr * 255)},${Math.round(c.fg * 255)},${Math.round(c.fb * 255)})`;
+  if (c && "r" in c) return `rgb(${Math.round(c.r)},${Math.round(c.g)},${Math.round(c.b)})`;
+  return "rgb(0,0,0)";
+}
+function rgbOf(css) { const m = css.match(/\d+/g).map(Number); return m; }
+/* squared Euclidean distance from every pixel to the nearest pixel where mask=1 (Felzenszwalb & Huttenlocher) */
+function distField(mask, w, h) {
+  const INF = 1e20, n = Math.max(w, h), f = new Float64Array(n), d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+  const g = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = mask[i] ? 0 : INF;
+  const pass = len => {
+    let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
+    for (let q = 1; q < len; q++) {
+      let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+      k++; v[k] = q; z[k] = s; z[k + 1] = INF;
+    }
+    k = 0;
+    for (let q = 0; q < len; q++) { while (z[k + 1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
+  };
+  for (let x = 0; x < w; x++) { for (let y = 0; y < h; y++) f[y] = g[y * w + x]; pass(h); for (let y = 0; y < h; y++) g[y * w + x] = d[y]; }
+  for (let y = 0; y < h; y++) { const r = y * w; for (let x = 0; x < w; x++) f[x] = g[r + x]; pass(w); for (let x = 0; x < w; x++) g[r + x] = Math.sqrt(d[x]); }
+  return g;
+}
+/* render a layer's pixels with its styles; k scales effect sizes (embedded originals are larger than on canvas) */
+function applyFx(src, fx, k, angle, fill) {
+  const sc = (fx.scale || 1) * k;
+  const ds = fxList(fx.dropShadow), og = fxList(fx.outerGlow), sf = fxList(fx.solidFill), sk = fxList(fx.stroke).filter(s => !s.fillType || s.fillType === "color");
+  if (!ds.length && !og.length && !sf.length && !sk.length) return null;
+  let pad = 2;
+  ds.forEach(e => { pad = Math.max(pad, fxPx(e.size, sc) * 1.5 + fxPx(e.distance, sc)); });
+  og.forEach(e => { pad = Math.max(pad, fxPx(e.size, sc) * 1.5); });
+  sk.forEach(e => { if (e.position !== "inside") pad = Math.max(pad, fxPx(e.size, sc)); });
+  pad = Math.ceil(pad) + 2;
+  const W = src.width + 2 * pad, H = src.height + 2 * pad;
+  const base = makeCanvas(W, H); base.getContext("2d").drawImage(src, pad, pad);
+  let alpha = null, dOut = null, dIn = null;
+  const getAlpha = () => { if (!alpha) { const p = base.getContext("2d").getImageData(0, 0, W, H).data; alpha = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) alpha[i] = p[i * 4 + 3] >= 128 ? 1 : 0; } return alpha; };
+  const outside = () => dOut || (dOut = distField(getAlpha(), W, H));                                   // distance to the shape
+  const inside = () => dIn || (dIn = distField(getAlpha().map(a => 1 - a), W, H));                      // distance to the outside
+  const paint = (cover, color) => {   // canvas filled with color where cover(i) > 0
+    const c = makeCanvas(W, H), cg = c.getContext("2d"), im = cg.createImageData(W, H), px = im.data, [r, g, b] = rgbOf(color);
+    for (let i = 0; i < W * H; i++) { const a = cover(i); if (a > 0) { const j = i * 4; px[j] = r; px[j + 1] = g; px[j + 2] = b; px[j + 3] = Math.min(255, a * 255); } }
+    cg.putImageData(im, 0, 0); return c;
+  };
+  const silhouette = (spread, color) => {
+    if (spread >= 0.5) { const d = outside(); return paint(i => Math.max(0, Math.min(1, spread + 1 - d[i])), color); }
+    const c = makeCanvas(W, H), cg = c.getContext("2d"); cg.drawImage(base, 0, 0); cg.globalCompositeOperation = "source-in"; cg.fillStyle = color; cg.fillRect(0, 0, W, H); return c;
+  };
+  const blur = (c, r) => { if (r < 0.5) return c; const b = makeCanvas(W, H), bg = b.getContext("2d"); bg.filter = `blur(${(r / 2).toFixed(2)}px)`; bg.drawImage(c, 0, 0); return b; };
+  const spreadOf = (e, size) => size * Math.min(100, Math.max(0, e.choke ? e.choke.value : 0)) / 100;
+
+  const out = makeCanvas(W, H), g = out.getContext("2d");
+  const put = (c, e, dx, dy, defOpacity, defBlend) => { g.save(); g.globalAlpha = e.opacity == null ? defOpacity : e.opacity; g.globalCompositeOperation = BLEND[e.blendMode || defBlend] || "source-over"; g.drawImage(c, dx, dy); g.restore(); };
+  // below the layer: drop shadows, then outer glow
+  ds.forEach(e => {
+    const size = fxPx(e.size, sc), spread = spreadOf(e, size), dist = fxPx(e.distance, sc);
+    const a = ((e.useGlobalLight !== false && angle != null) ? angle : (e.angle == null ? 120 : e.angle)) * Math.PI / 180;
+    put(blur(silhouette(spread, fxColor(e.color)), size - spread), e, -Math.cos(a) * dist, Math.sin(a) * dist, 0.75, "multiply");
+  });
+  og.forEach(e => { const size = fxPx(e.size, sc), spread = spreadOf(e, size); put(blur(silhouette(spread, fxColor(e.color)), size - spread), e, 0, 0, 0.75, "screen"); });
+  // the layer's own pixels with colour overlays, at fill opacity
+  const body = makeCanvas(W, H), bg = body.getContext("2d"); bg.drawImage(base, 0, 0);
+  sf.forEach(e => {
+    bg.save(); bg.globalAlpha = e.opacity == null ? 1 : e.opacity;
+    const mode = BLEND[e.blendMode] || "source-over";
+    if (mode === "source-over") { bg.globalCompositeOperation = "source-atop"; bg.fillStyle = fxColor(e.color); bg.fillRect(0, 0, W, H); }
+    else { bg.globalCompositeOperation = mode; bg.drawImage(silhouette(0, fxColor(e.color)), 0, 0); }
+    bg.restore();
+  });
+  g.save(); g.globalAlpha = fill == null ? 1 : fill; g.drawImage(body, 0, 0); g.restore();
+  // strokes on top
+  sk.forEach(e => {
+    const size = fxPx(e.size, sc); if (size <= 0) return;
+    const pos = e.position || "outside", o = pos === "center" ? size / 2 : pos === "outside" ? size : 0, i_ = pos === "center" ? size / 2 : pos === "inside" ? size : 0;
+    const dO = o > 0 ? outside() : null, dI = i_ > 0 ? inside() : null, al = getAlpha();
+    const ring = paint(i => al[i] ? (dI ? Math.max(0, Math.min(1, i_ + 1 - dI[i])) : 0) : (dO ? Math.max(0, Math.min(1, o + 1 - dO[i])) : 0), fxColor(e.color));
+    put(ring, e, 0, 0, 1, "normal");
+  });
+  return { canvas: out, pad };
+}
+function nodeFx(n) { if (n._fx === undefined) n._fx = applyFx(n.canvas, n.effects, 1, n.angle, n.fill); return n._fx; }
 function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
 
 function alphaBounds(c) {
@@ -425,11 +532,11 @@ function settings() {
   const dpiSel = $("#dpi").value;
   const src = (d && d.dpi) || 72;
   const target = dpiSel === "orig" ? src : +dpiSel;
+  const so = document.querySelector('input[name=so]:checked').value;
   return {
-    so: document.querySelector('input[name=so]:checked').value,
-    scale: target / src, targetDpi: target, srcDpi: src,
+    so, scale: target / src, targetDpi: target, srcDpi: src,
     transparent: $("#transparent").checked, bg: $("#bgColor").value,
-    trim: $("#trim").checked, useOpacity: $("#opacity").checked
+    trim: so === "original", useOpacity: true, fx: $("#fx").checked
   };
 }
 
@@ -438,7 +545,7 @@ function renderNode(d, n, st) {
   const full = makeCanvas(d.width * st.scale, d.height * st.scale);
   const ctx = full.getContext("2d");
   const isGroup = n.kind === "group";
-  drawTree(ctx, [n], st.scale, { respectHidden: false, onlyChecked: isGroup, useOpacity: st.useOpacity, blend: isGroup }, 1);
+  drawTree(ctx, [n], st.scale, { respectHidden: false, onlyChecked: isGroup, useOpacity: st.useOpacity, blend: isGroup, fx: st.fx }, 1);
   // a group's own hidden flag is ignored here: the person picked its children explicitly
   let out = full;
   if (st.trim) {
@@ -458,6 +565,12 @@ function finish(out, st) {
 }
 /* Smart Object at its embedded original resolution (DPI setting does not apply) */
 function renderSoOriginal(src, n, st) {
+  if (st.fx && n.effects) {
+    // effect sizes are in canvas pixels: scale them up to the original's resolution
+    const k = n.so.dispW > 0 ? src.width / n.so.dispW : 1;
+    const f = applyFx(src, n.effects, k, n.angle, n.fill);
+    if (f) src = f.canvas;
+  }
   let out = makeCanvas(src.width, src.height);
   const g = out.getContext("2d");
   g.globalAlpha = st.useOpacity ? n.opacity : 1;
@@ -507,6 +620,7 @@ function fromPsd(psd, name, size, ext) {
   let dpi = ri ? ri.horizontalResolution : 72;
   if (ri && ri.horizontalResolutionUnit === "PPCM") dpi = dpi * 2.54;
   currentLinked = psd.linkedFiles || [];
+  currentAngle = psd.imageResources && psd.imageResources.globalAngle != null ? psd.imageResources.globalAngle : 30;
   const d = { name, size, ext, width: psd.width, height: psd.height, dpi: Math.round(dpi) || 72,
     colorMode: COLOR_MODE[psd.colorMode] || "?", bits: psd.bitsPerChannel || 8,
     composite: psd.canvas || null, nodes: buildNodes(psd.children, null), sample: false };
@@ -526,7 +640,7 @@ function isBlank(c) {
 }
 function compositeOf(d) {
   const c = makeCanvas(d.width, d.height);
-  drawTree(c.getContext("2d"), d.nodes, 1, { respectHidden: true, useOpacity: true, blend: true }, 1);
+  drawTree(c.getContext("2d"), d.nodes, 1, { respectHidden: true, useOpacity: true, blend: true, fx: true }, 1);
   return c;
 }
 function showAiNote(name) {
@@ -601,12 +715,13 @@ function renderStage() {
   if (!d) { vp.replaceChildren(el("div", { class: "empty-state" }, el("strong", { text: "ยังไม่มีไฟล์" }), "เลือกไฟล์ .psd หรือ .psb เพื่อเริ่ม")); $("#zVal").textContent = "—"; return; }
   // the preview follows the checkboxes: the file's own composite while the default selection is untouched,
   // otherwise only the checked layers are painted
-  const key = checkKey(d);
+  const st = settings(), key = checkKey(d) + (st.fx ? "|fx" : "");
   if (!stageCanvas || stageCanvas._doc !== d || stageCanvas._key !== key) {
     stageCanvas = makeCanvas(d.width, d.height); stageCanvas._doc = d; stageCanvas._key = key;
     const g = stageCanvas.getContext("2d");
-    if (key === d.defaultKey) g.drawImage(d.composite, 0, 0, d.width, d.height);
-    else drawTree(g, d.nodes, 1, { respectHidden: false, onlyChecked: true, useOpacity: true, blend: true }, 1);
+    // the file's own composite already carries every Layer Style
+    if (key === d.defaultKey + "|fx") g.drawImage(d.composite, 0, 0, d.width, d.height);
+    else drawTree(g, d.nodes, 1, { respectHidden: false, onlyChecked: true, useOpacity: true, blend: true, fx: st.fx }, 1);
   }
   const art = el("div", { class: "art" }); art.append(stageCanvas);
   const sel = S.selected && findNode(d, S.selected);
@@ -618,10 +733,10 @@ function renderStage() {
     Object.assign(hl.style, { left: x0 / d.width * 100 + "%", top: y0 / d.height * 100 + "%", width: (x1 - x0) / d.width * 100 + "%", height: (y1 - y0) / d.height * 100 + "%" });
     art.append(hl);
   };
-  // only the clicked layer is outlined: orange (same as the warning text) when it hits a Smart Object limitation
+  // only the clicked layer is outlined: orange (same as the warning text) when it hits a limitation
   if (sel) {
     const b = nodeBounds(sel);
-    const limited = settings().so === "original" && sel.so && (sel.so.problem || sel.so.note);
+    const limited = (st.so === "original" && sel.so && (sel.so.problem || sel.so.note)) || (st.fx && sel.fxBad && sel.fxBad.length);
     if (b) box(b, sel.name, limited ? "hl alert" : "hl");
   }
   vp.replaceChildren(art);
@@ -648,7 +763,7 @@ function renderInfo() {
   box.replaceChildren(
     el("dl", {}, row("ไฟล์", d.name), row("ขนาดไฟล์", d.sample ? "—" : fmtBytes(d.size)), row("Canvas", `${d.width} × ${d.height} px`), row("ความละเอียด", `${d.dpi} DPI`), row("โหมดสี", `${d.colorMode} · ${d.bits}-bit`), row("Layer", `${layers} (ข้อความ ${texts}, ว่าง/adjustment ${empties})`), row("Smart Object", String(sos)), row("มี Layer Style (fx)", String(fxs)), row("Group", String(groups)), row("ปิดตาอยู่", String(hidden))),
     el("h3", { text: "ข้อจำกัด" }),
-    el("ul", {}, el("li", { text: "Layer Style (เงา, stroke, glow) และ mask ไม่ถูก render ได้ภาพ pixel ของ layer อย่างเดียว" }), el("li", { text: "Smart Object ขนาดต้นฉบับใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked และแบบ vector" }), el("li", { text: "Adjustment layer และ layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
+    el("ul", {}, el("li", { text: "Layer Style ที่รองรับ: Drop Shadow, Stroke (สีเดียว), Outer Glow, Color Overlay · แบบอื่นและ mask ไม่ถูก render" }), el("li", { text: "Smart Object ความละเอียดเต็มใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked, แบบ vector และแบบที่มี Smart Filter" }), el("li", { text: "Adjustment layer และ layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
   );
 }
 
@@ -708,18 +823,23 @@ function renderOutInfo() {
   $("#dpiHint").textContent = st.scale === 1 ? `ไฟล์ต้นฉบับ ${d.srcDpi || d.dpi} DPI · ${d.width}×${d.height} px` : `ขยาย ${st.scale.toFixed(2)}× จาก ${d.dpi} DPI → canvas ${W}×${H} px` + (st.scale > 1 ? " (ภาพอาจแตกถ้าต้นฉบับละเอียดไม่พอ)" : "");
   const p = plan(d);
   const zip = zipName(d);
-  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), `${p.length} ไฟล์ PNG (1.png – ${p.length}.png)`, el("br"), st.trim ? "ขนาดตามเนื้อภาพ (trim)" : `ทุกไฟล์ ${W}×${H} px`);
+  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), `${p.length} ไฟล์ PNG (1.png – ${p.length}.png)`, el("br"), st.trim ? "ขนาดตามเนื้อภาพ (ตัดขอบใส)" : `ทุกไฟล์ ${W}×${H} px`);
   $("#splitBtn").disabled = $("#previewBtn").disabled = !p.length;
 
-  // Smart Object section: what will happen to each checked Smart Object
-  const sos = p.map(i => i.node).filter(n => n.so);
-  const allSo = []; walk(d.nodes, n => { if (n.so) allSo.push(n); });
-  const hint = $("#soHint");
-  document.querySelectorAll("input[name=so]").forEach(r => { r.disabled = !allSo.length; });
-  if (!allSo.length) { hint.replaceChildren("ไฟล์นี้ไม่มี Smart Object"); return; }
-  if (st.so === "canvas") { hint.replaceChildren(`Smart Object ที่เลือก ${sos.length} รายการ จะใช้ภาพตามที่เห็นใน canvas`); return; }
+  // Layer Style: styles that cannot be rendered yet
+  const fxHint = $("#fxHint"), fxs = p.map(i => i.node).filter(n => n.fx);
+  if (!st.fx || !fxs.length) fxHint.replaceChildren();
+  else {
+    const un = fxs.filter(n => n.fxBad.length);
+    fxHint.replaceChildren(`Layer ที่เลือกมี Layer Style ${fxs.length} รายการ`);
+    if (un.length) fxHint.append(el("ul", { class: "solist" }, ...un.map(n => el("li", { text: `${n.name}: ยังไม่รองรับ ${n.fxBad.join(", ")} ส่วนนี้จะไม่ติดไปด้วย` }))));
+  }
+
+  // Smart Object: what happens to each checked Smart Object in "ตามต้นฉบับ"
+  const sos = p.map(i => i.node).filter(n => n.so), hint = $("#soHint");
+  if (st.so === "canvas" || !sos.length) { hint.replaceChildren(); return; }
   const bad = sos.filter(n => n.so.problem), noted = sos.filter(n => !n.so.problem && n.so.note);
-  hint.replaceChildren(`Smart Object ที่เลือก ${sos.length} รายการ · ใช้ขนาดต้นฉบับได้ ${sos.length - bad.length}` + (bad.length ? ` · ใช้ไม่ได้ ${bad.length}` : "") + " (ค่า DPI ไม่มีผลกับขนาดต้นฉบับ)");
+  hint.replaceChildren(`Smart Object ที่เลือก ${sos.length} รายการ · ใช้ความละเอียดเต็มได้ ${sos.length - bad.length}` + (bad.length ? ` · ใช้ไม่ได้ ${bad.length}` : "") + " (ค่า DPI ไม่มีผลกับ Smart Object ที่ใช้ความละเอียดเต็ม)");
   if (bad.length || noted.length) hint.append(el("ul", { class: "solist" }, ...bad.map(n => el("li", { text: `${n.name}: ${n.so.problem}` })), ...noted.map(n => el("li", { text: `${n.name}: ${n.so.note}` }))));
 }
 function selectionChanged() { renderTree(); renderStage(); renderOutInfo(); }
@@ -743,6 +863,7 @@ async function renderPlan(onItem) {
       }
     }
     if (!c) c = renderNode(d, n, st);
+    if (st.fx && n.fxBad.length) note = (note ? note + " · " : "") + "ยังไม่รองรับ " + n.fxBad.join(", ");
     if (c) out.push({ path: p[i].path, canvas: c, node: n, note });
     setProg((i + 1) / p.length);
     if (onItem) await onItem(i, p.length);
@@ -814,7 +935,8 @@ const drop = $("#drop");
 ["dragleave", "drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === document.documentElement) drop.classList.remove("over"); }));
 document.addEventListener("drop", e => { const fs = [...(e.dataTransfer && e.dataTransfer.files || [])]; if (fs.length) { dropSample(); addFiles(fs); } });
 function dropSample() { const i = S.docs.findIndex(d => d.sample); if (i >= 0) { S.docs.splice(i, 1); S.active = S.docs.length - 1; } }
-["dpi", "trim", "opacity"].forEach(id => $("#" + id).addEventListener("change", renderOutInfo));
+$("#dpi").addEventListener("change", renderOutInfo);
+$("#fx").addEventListener("change", () => { renderOutInfo(); renderStage(); });
 document.querySelectorAll("input[name=so]").forEach(r => r.addEventListener("change", () => { renderOutInfo(); renderStage(); }));
 $("#transparent").addEventListener("change", () => { $("#bgRow").hidden = $("#transparent").checked; renderOutInfo(); });
 $("#splitBtn").onclick = doSplit;
