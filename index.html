@@ -295,6 +295,7 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
       <div class="colorrow" id="bgRow" hidden><input type="color" id="bgColor" value="#ffffff" aria-label="สีพื้นหลัง"><span>สีพื้นหลัง</span></div>
       <label class="checkrow"><input type="checkbox" id="fx" checked><span>Export Layer Style<small>Drop Shadow, Stroke, Outer Glow, Color Overlay</small></span></label>
       <div class="hint" id="fxHint"></div>
+      <div class="hint" id="adjHint"></div>
     </div>
 
     <div class="result">
@@ -416,6 +417,7 @@ function buildNodes(children, parent) {
       hidden: !!L.hidden, opacity: L.opacity == null ? 1 : L.opacity,
       blend: L.blendMode || "normal", left: L.left || 0, top: L.top || 0,
       canvas: L.canvas || null, adjustment: !!L.adjustment, clipping: !!L.clipping,
+      adj: isGroup ? null : (L.adjustment || null), mask: L.mask || null,
       expanded: isGroup ? (L.opened !== false) : false, checked: false, children: [],
       so: isGroup ? null : soInfo(L), fx: false, effects: null, fxBad: [],
       fill: L.fillOpacity == null ? 1 : L.fillOpacity, angle: currentAngle
@@ -424,14 +426,15 @@ function buildNodes(children, parent) {
     if (isGroup) n.children = buildNodes(L.children, n);
     out.push(n);
   }
+  for (const n of out) n.sibs = out;   // siblings top→bottom: adjustments look upward through these
   return out;
 }
 function walk(nodes, fn) { for (const n of nodes) { fn(n); if (n.children.length) walk(n.children, fn); } }
 function effHidden(n) { for (let p = n; p; p = p.parent) if (p.hidden) return true; return false; }
 function hasContent(n) { if (n.kind === "group") return n.children.some(hasContent); return n.kind === "layer" || n.kind === "text"; }
-function leafChecked(n) { return n.kind === "group" ? n.children.some(leafChecked) : n.checked; }
+function leafChecked(n) { return n.kind === "group" ? n.children.some(leafChecked) : n.checked && hasContent(n); }
 
-function setDefaultChecks(d) { walk(d.nodes, n => { if (n.kind !== "group") n.checked = hasContent(n) && !effHidden(n); }); }
+function setDefaultChecks(d) { walk(d.nodes, n => { if (n.kind !== "group") n.checked = (hasContent(n) || !!n.adj) && !effHidden(n); }); }
 
 /* ---------- rendering helpers ---------- */
 function drawTree(ctx, nodes, scale, opts, alphaMul) {
@@ -445,6 +448,12 @@ function drawTree(ctx, nodes, scale, opts, alphaMul) {
     if (!n.canvas || n.kind === "empty") continue;
     let img = n.canvas, off = 0;
     if (opts.fx && n.effects) { const f = nodeFx(n); if (f) { img = f.canvas; off = f.pad; } }
+    const adjs = adjFor(n, opts.adjOn || adjOnChecked);
+    if (adjs.length) {
+      const key = adjs.map(a => a.id).join(",") + (img === n.canvas ? "" : "|fx");
+      if (!n._adj || n._adj.key !== key) n._adj = { key, canvas: applyAdjustments(img, adjs, n.left - off, n.top - off, 1, 1) };
+      img = n._adj.canvas;
+    }
     ctx.save();
     ctx.globalAlpha = a;
     ctx.globalCompositeOperation = opts.blend ? (BLEND[n.blend] || "source-over") : "source-over";
@@ -453,6 +462,195 @@ function drawTree(ctx, nodes, scale, opts, alphaMul) {
     ctx.restore();
   }
 }
+
+/* ---------- Adjustment layers ---------- */
+const ADJ_NAME = { "curves": "Curves", "levels": "Levels", "brightness/contrast": "Brightness/Contrast", "hue/saturation": "Hue/Saturation", "exposure": "Exposure", "vibrance": "Vibrance", "color balance": "Color Balance", "black & white": "Black & White", "photo filter": "Photo Filter", "invert": "Invert", "threshold": "Threshold", "posterize": "Posterize", "gradient map": "Gradient Map", "color lookup": "Color Lookup", "selective color": "Selective Color", "channel mixer": "Channel Mixer" };
+const ADJ_UNSUPPORTED = new Set(["color lookup", "selective color", "channel mixer"]);
+const adjName = a => ADJ_NAME[a.type] || a.type || "Adjustment";
+const adjSupported = a => !!a && !!a.type && !ADJ_UNSUPPORTED.has(a.type) && !!ADJ_NAME[a.type];
+/* adjustments that reach node n, nearest first — Photoshop order: an adjustment affects everything below it in
+   its group (and, from outside, the whole group); a clipped adjustment only reaches its own clipping stack */
+function adjFor(n, isOn) {
+  const out = [];
+  for (let cur = n; cur; cur = cur.parent) {
+    const s = cur.sibs || [], k = s.indexOf(cur);
+    for (let i = k - 1; i >= 0; i--) {
+      const a = s[i]; if (!a.adj || !isOn(a) || !adjSupported(a.adj)) continue;
+      if (a.clipping) { let base = i + 1; while (base < s.length && s[base].clipping) base++; if (k > base) continue; }
+      out.push(a);
+    }
+  }
+  return out;
+}
+const clamp255 = v => v < 0 ? 0 : v > 255 ? 255 : v;
+function rgb2hsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; let h = 0, s = 0;
+  if (mx !== mn) { const d = mx - mn; s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; }
+  return [h, s, l];
+}
+function hsl2rgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  if (!s) { const v = l * 255; return [v, v, v]; }
+  const q = l < .5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  const f = t => { t = (t + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < .5 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; };
+  return [f(h + 1 / 3) * 255, f(h) * 255, f(h - 1 / 3) * 255];
+}
+const lum = (r, g, b) => .299 * r + .587 * g + .114 * b;
+const rgbOfColor = c => c && "fr" in c ? [c.fr * 255, c.fg * 255, c.fb * 255] : c && "r" in c ? [c.r, c.g, c.b] : [0, 0, 0];
+/* natural cubic spline through Photoshop curve points → 256-entry table */
+function curveLUT(pts) {
+  const lut = new Uint8ClampedArray(256); for (let i = 0; i < 256; i++) lut[i] = i;
+  if (!pts || pts.length < 2) return lut;
+  const p = [...pts].sort((a, b) => a.input - b.input), n = p.length, x = p.map(q => q.input), y = p.map(q => q.output);
+  const m = new Array(n).fill(0);
+  if (n > 2) {
+    const a = [], b = [], c = [], r = [];
+    for (let i = 1; i < n - 1; i++) { a.push(x[i] - x[i - 1]); b.push(2 * (x[i + 1] - x[i - 1])); c.push(x[i + 1] - x[i]); r.push(6 * ((y[i + 1] - y[i]) / (x[i + 1] - x[i]) - (y[i] - y[i - 1]) / (x[i] - x[i - 1]))); }
+    for (let i = 1; i < r.length; i++) { const w = a[i] / b[i - 1]; b[i] -= w * c[i - 1]; r[i] -= w * r[i - 1]; }
+    for (let i = r.length - 1; i >= 0; i--) m[i + 1] = (r[i] - (i < r.length - 1 ? c[i] * m[i + 2] : 0)) / b[i];
+  }
+  for (let v = 0; v < 256; v++) {
+    if (v <= x[0]) { lut[v] = y[0]; continue; } if (v >= x[n - 1]) { lut[v] = y[n - 1]; continue; }
+    let i = 0; while (v > x[i + 1]) i++;
+    const h = x[i + 1] - x[i], t1 = (x[i + 1] - v) / h, t2 = (v - x[i]) / h;
+    lut[v] = t1 * y[i] + t2 * y[i + 1] + ((t1 * t1 * t1 - t1) * m[i] + (t2 * t2 * t2 - t2) * m[i + 1]) * h * h / 6;
+  }
+  return lut;
+}
+function levelsLUT(ch) {
+  const lut = new Uint8ClampedArray(256);
+  if (!ch) { for (let i = 0; i < 256; i++) lut[i] = i; return lut; }
+  const lo = ch.shadowInput || 0, hi = ch.highlightInput == null ? 255 : ch.highlightInput, olo = ch.shadowOutput || 0, ohi = ch.highlightOutput == null ? 255 : ch.highlightOutput;
+  let g = ch.midtoneInput == null ? 1 : ch.midtoneInput; if (g > 9.99) g /= 100; if (g <= 0) g = 1;
+  for (let i = 0; i < 256; i++) { let t = (i - lo) / Math.max(1, hi - lo); t = t < 0 ? 0 : t > 1 ? 1 : t; lut[i] = olo + Math.pow(t, 1 / g) * (ohi - olo); }
+  return lut;
+}
+/* hue-range weight for Hue/Saturation colour channels (a..d are the range sliders, in degrees) */
+function hueWeight(h, c) {
+  const rel = v => ((v - c.a) % 360 + 360) % 360, H = rel(h), B = rel(c.b), C = rel(c.c), D = rel(c.d);
+  if (H <= B) return B > 0 ? H / B : 1; if (H <= C) return 1; if (H <= D) return D > C ? (D - H) / (D - C) : 0; return 0;
+}
+/* build a per-pixel function [r,g,b] → [r,g,b] for one adjustment */
+function adjFn(a) {
+  switch (a.type) {
+    case "curves": { const m = curveLUT(a.rgb), r = curveLUT(a.red), g = curveLUT(a.green), b = curveLUT(a.blue); return p => { p[0] = m[r[p[0] | 0]]; p[1] = m[g[p[1] | 0]]; p[2] = m[b[p[2] | 0]]; }; }
+    case "levels": { const m = levelsLUT(a.rgb), r = levelsLUT(a.red), g = levelsLUT(a.green), b = levelsLUT(a.blue); return p => { p[0] = m[r[p[0] | 0]]; p[1] = m[g[p[1] | 0]]; p[2] = m[b[p[2] | 0]]; }; }
+    case "brightness/contrast": {
+      const br = a.brightness || 0, ct = a.contrast || 0, lut = new Uint8ClampedArray(256);
+      for (let i = 0; i < 256; i++) {
+        let v = a.useLegacy ? i + br : br >= 0 ? 255 * Math.pow(i / 255, 1 / (1 + br / 100)) : 255 * Math.pow(i / 255, 1 - br / 100);
+        const k = ct >= 0 ? 1 + ct / 100 * (a.useLegacy ? 1 : .75) : 1 + ct / 100;
+        lut[i] = (v - 127.5) * k + 127.5;
+      }
+      return p => { p[0] = lut[p[0] | 0]; p[1] = lut[p[1] | 0]; p[2] = lut[p[2] | 0]; };
+    }
+    case "hue/saturation": {
+      const chans = ["reds", "yellows", "greens", "cyans", "blues", "magentas"].map(k => a[k]).filter(c => c && (c.hue || c.saturation || c.lightness));
+      const M = a.master || { hue: 0, saturation: 0, lightness: 0 };
+      return p => {
+        let [h, s, l] = rgb2hsl(p[0], p[1], p[2]); let dh = M.hue || 0, ds = M.saturation || 0, dl = M.lightness || 0;
+        for (const c of chans) { const w = hueWeight(h, c); if (w) { dh += (c.hue || 0) * w; ds += (c.saturation || 0) * w; dl += (c.lightness || 0) * w; } }
+        h += dh; s *= 1 + ds / 100; s = s < 0 ? 0 : s > 1 ? 1 : s;
+        let [r, g, b] = hsl2rgb(h, s, l);
+        if (dl > 0) { const t = dl / 100; r += (255 - r) * t; g += (255 - g) * t; b += (255 - b) * t; } else if (dl < 0) { const t = 1 + dl / 100; r *= t; g *= t; b *= t; }
+        p[0] = r; p[1] = g; p[2] = b;
+      };
+    }
+    case "exposure": {
+      const e = Math.pow(2, a.exposure || 0), o = a.offset || 0, gm = a.gamma || 1, lut = new Uint8ClampedArray(256);
+      for (let i = 0; i < 256; i++) { const c = i / 255; let L = c <= .04045 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); L = Math.max(0, L * e + o); L = Math.pow(L, 1 / gm);
+        lut[i] = 255 * (L <= .0031308 ? 12.92 * L : 1.055 * Math.pow(L, 1 / 2.4) - .055); }
+      return p => { p[0] = lut[p[0] | 0]; p[1] = lut[p[1] | 0]; p[2] = lut[p[2] | 0]; };
+    }
+    case "vibrance": {
+      const vib = (a.vibrance || 0) / 100, sat = (a.saturation || 0) / 100;
+      return p => {
+        let [h, s, l] = rgb2hsl(p[0], p[1], p[2]);
+        if (vib) s = vib > 0 ? s + (1 - s) * vib * (1 - s) : s * (1 + vib * (1 - s));
+        if (sat) s = sat > 0 ? s + (1 - s) * sat * s : s * (1 + sat);
+        s = s < 0 ? 0 : s > 1 ? 1 : s; const q = hsl2rgb(h, s, l); p[0] = q[0]; p[1] = q[1]; p[2] = q[2];
+      };
+    }
+    case "color balance": {
+      const S = a.shadows || {}, Mi = a.midtones || {}, Hi = a.highlights || {}, keep = a.preserveLuminosity !== false;
+      return p => {
+        const l0 = lum(p[0], p[1], p[2]) / 255;
+        const ws = Math.max(0, 1 - l0 / .5) , wh = Math.max(0, (l0 - .5) / .5), wm = 1 - Math.abs(l0 - .5) * 2;
+        const sh = (k) => ((S[k] || 0) * ws + (Mi[k] || 0) * wm + (Hi[k] || 0) * wh) * 1.0;
+        let r = p[0] + sh("cyanRed"), g = p[1] + sh("magentaGreen"), b = p[2] + sh("yellowBlue");
+        if (keep) { const d = l0 * 255 - lum(r, g, b); r += d; g += d; b += d; }
+        p[0] = r; p[1] = g; p[2] = b;
+      };
+    }
+    case "black & white": {
+      const W = { r: (a.reds ?? 40) / 100, y: (a.yellows ?? 60) / 100, g: (a.greens ?? 40) / 100, c: (a.cyans ?? 60) / 100, b: (a.blues ?? 20) / 100, m: (a.magentas ?? 80) / 100 };
+      const tint = a.useTint ? rgbOfColor(a.tintColor) : null, th = tint ? rgb2hsl(...tint) : null;
+      return p => {
+        const [r, g, b] = p, mn = Math.min(r, g, b), mx = Math.max(r, g, b), md = r + g + b - mn - mx;
+        // the largest channel picks a primary weight, the two largest together pick a secondary
+        const prim = mx === r ? W.r : mx === g ? W.g : W.b;
+        const sec = mn === b ? W.y : mn === r ? W.c : W.m;
+        let v = mn + (md - mn) * sec + (mx - md) * prim; v = clamp255(v);
+        if (th) { const q = hsl2rgb(th[0], th[1], v / 255); p[0] = q[0]; p[1] = q[1]; p[2] = q[2]; } else { p[0] = p[1] = p[2] = v; }
+      };
+    }
+    case "photo filter": {
+      const [cr, cg, cb] = rgbOfColor(a.color), d = (a.density ?? 25) / 100, keep = a.preserveLuminosity !== false;
+      return p => { const l0 = lum(p[0], p[1], p[2]);
+        let r = p[0] + (p[0] * cr / 255 - p[0]) * d + (cr - 128) * d * .25, g = p[1] + (p[1] * cg / 255 - p[1]) * d + (cg - 128) * d * .25, b = p[2] + (p[2] * cb / 255 - p[2]) * d + (cb - 128) * d * .25;
+        if (keep) { const k = lum(r, g, b); if (k > 0) { const f = l0 / k; r *= f; g *= f; b *= f; } }
+        p[0] = r; p[1] = g; p[2] = b; };
+    }
+    case "invert": return p => { p[0] = 255 - p[0]; p[1] = 255 - p[1]; p[2] = 255 - p[2]; };
+    case "threshold": { const t = a.level ?? 128; return p => { const v = lum(p[0], p[1], p[2]) >= t ? 255 : 0; p[0] = p[1] = p[2] = v; }; }
+    case "posterize": { const n = Math.max(2, a.levels || 4); return p => { for (let i = 0; i < 3; i++) p[i] = Math.round(p[i] / 255 * (n - 1)) / (n - 1) * 255; }; }
+    case "gradient map": {
+      const stops = (a.colorStops || []).map(s => ({ loc: s.location > 1 ? s.location / 4096 : s.location, c: rgbOfColor(s.color) })).sort((x, y) => x.loc - y.loc);
+      if (!stops.length) return null;
+      const lut = new Array(256);
+      for (let i = 0; i < 256; i++) {
+        let t = i / 255; if (a.reverse) t = 1 - t;
+        let j = 0; while (j < stops.length - 1 && t > stops[j + 1].loc) j++;
+        const s0 = stops[j], s1 = stops[Math.min(j + 1, stops.length - 1)], span = s1.loc - s0.loc, f = span > 0 ? Math.min(1, Math.max(0, (t - s0.loc) / span)) : 0;
+        lut[i] = t <= stops[0].loc ? stops[0].c : t >= stops[stops.length - 1].loc ? stops[stops.length - 1].c : [0, 1, 2].map(k => s0.c[k] + (s1.c[k] - s0.c[k]) * f);
+      }
+      return p => { const q = lut[clamp255(Math.round(lum(p[0], p[1], p[2])))]; p[0] = q[0]; p[1] = q[1]; p[2] = q[2]; };
+    }
+  }
+  return null;
+}
+function maskData(a) {
+  const m = a.mask; if (!m || m.disabled || !m.canvas || !m.canvas.width) return null;
+  if (!a._mask) a._mask = { d: m.canvas.getContext("2d").getImageData(0, 0, m.canvas.width, m.canvas.height).data, w: m.canvas.width, h: m.canvas.height, x: m.left || 0, y: m.top || 0, def: m.defaultColor == null ? 255 : m.defaultColor };
+  return a._mask;
+}
+/* apply adjustments to an image whose pixel (px,py) sits at document position (ox + px*sx, oy + py*sy) */
+function applyAdjustments(img, list, ox, oy, sx, sy) {
+  const W = img.width, H = img.height, out = makeCanvas(W, H), g = out.getContext("2d");
+  g.drawImage(img, 0, 0);
+  const id = g.getImageData(0, 0, W, H), px = id.data, p = [0, 0, 0];
+  for (const a of list) {
+    const fn = adjFn(a.adj); if (!fn) continue;
+    const mk = maskData(a), op = (a.opacity == null ? 1 : a.opacity) * (a.fill == null ? 1 : a.fill);
+    for (let y = 0; y < H; y++) {
+      const my = mk ? Math.floor(oy + (y + .5) * sy) - mk.y : 0;
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4; if (!px[i + 3]) continue;
+        let k = op;
+        if (mk) { const mx = Math.floor(ox + (x + .5) * sx) - mk.x; k *= (mx >= 0 && my >= 0 && mx < mk.w && my < mk.h ? mk.d[(my * mk.w + mx) * 4] : mk.def) / 255; if (!k) continue; }
+        p[0] = px[i]; p[1] = px[i + 1]; p[2] = px[i + 2]; fn(p);
+        if (k >= 1) { px[i] = p[0]; px[i + 1] = p[1]; px[i + 2] = p[2]; }
+        else { px[i] += (p[0] - px[i]) * k; px[i + 1] += (p[1] - px[i + 1]) * k; px[i + 2] += (p[2] - px[i + 2]) * k; }
+      }
+    }
+  }
+  g.putImageData(id, 0, 0);
+  return out;
+}
+const adjOnChecked = a => a.checked;
+const adjOnVisible = a => !effHidden(a);
 
 /* ---------- Layer Style (Drop Shadow, Outer Glow, Color Overlay, Stroke) ---------- */
 let currentAngle = 30;   // global light of the document being built
@@ -602,6 +800,12 @@ function renderSoOriginal(src, n, st) {
     const f = applyFx(src, n.effects, k, n.angle, n.fill);
     if (f) src = f.canvas;
   }
+  const adjs = adjFor(n, adjOnChecked);
+  if (adjs.length && n.canvas) {
+    // map the original's pixels back onto the layer's place in the document for adjustment masks
+    const sx = n.canvas.width / src.width, sy = n.canvas.height / src.height;
+    src = applyAdjustments(src, adjs, n.left, n.top, sx, sy);
+  }
   let out = makeCanvas(src.width, src.height);
   const g = out.getContext("2d");
   g.globalAlpha = st.useOpacity ? n.opacity : 1;
@@ -683,7 +887,7 @@ function isBlank(c) {
 }
 function compositeOf(d) {
   const c = makeCanvas(d.width, d.height);
-  drawTree(c.getContext("2d"), d.nodes, 1, { respectHidden: true, useOpacity: true, blend: true, fx: true }, 1);
+  drawTree(c.getContext("2d"), d.nodes, 1, { respectHidden: true, useOpacity: true, blend: true, fx: true, adjOn: adjOnVisible }, 1);
   return c;
 }
 function showAiNote(name) {
@@ -819,7 +1023,7 @@ function renderInfo() {
   box.replaceChildren(
     el("dl", {}, row("ไฟล์", d.name), row("ขนาดไฟล์", d.sample ? "—" : fmtBytes(d.size)), row("Canvas", `${d.width} × ${d.height} px`), row("ความละเอียด", `${d.dpi} DPI`), row("โหมดสี", `${d.colorMode} · ${d.bits}-bit`), row("Layer", `${layers} (ข้อความ ${texts}, ว่าง/adjustment ${empties})`), row("Smart Object", String(sos)), row("มี Layer Style (fx)", String(fxs)), row("Group", String(groups)), row("ปิดตาอยู่", String(hidden))),
     el("h3", { text: "ข้อจำกัด" }),
-    el("ul", {}, el("li", { text: "Layer Style ที่รองรับ: Drop Shadow, Stroke (สีเดียว), Outer Glow, Color Overlay · แบบอื่นและ mask ไม่ถูก render" }), el("li", { text: "Smart Object ความละเอียดเต็มใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked, แบบ vector และแบบที่มี Smart Filter" }), el("li", { text: "Adjustment layer และ layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
+    el("ul", {}, el("li", { text: "Layer Style ที่รองรับ: Drop Shadow, Stroke (สีเดียว), Outer Glow, Color Overlay · แบบอื่นและ mask ไม่ถูก render" }), el("li", { text: "Smart Object ความละเอียดเต็มใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked, แบบ vector และแบบที่มี Smart Filter" }), el("li", { text: "Adjustment layer ใช้ได้ทุกแบบยกเว้น Color Lookup, Selective Color, Channel Mixer · ผลอาจต่างจาก Photoshop เล็กน้อย · layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
   );
 }
 
@@ -846,15 +1050,15 @@ function renderTree() {
       const usable = hasContent(n);
       if (n.kind === "group") { const all = []; walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) all.push(c.checked); }); cb.checked = all.length && all.every(Boolean); cb.indeterminate = !cb.checked && all.some(Boolean); }
       else cb.checked = n.checked;
-      cb.disabled = !usable;
-      cb.addEventListener("change", () => { const v = cb.checked; if (n.kind === "group") walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) c.checked = v; }); else n.checked = v; selectionChanged(); });
+      cb.disabled = !usable && !n.adj;
+      cb.addEventListener("change", () => { const v = cb.checked; if (n.kind === "group") walk(n.children, c => { if (c.kind !== "group" && (hasContent(c) || c.adj)) c.checked = v; }); else n.checked = v; selectionChanged(); });
       const tw = el("button", { class: "twisty" + (n.kind === "group" ? "" : " none"), type: "button", "aria-label": n.expanded ? "ยุบ" : "ขยาย", "aria-expanded": String(n.expanded || !!q) });
       tw.innerHTML = ICON.chev;
       tw.addEventListener("click", () => { n.expanded = !n.expanded; renderTree(); });
       const name = el("span", { class: "lname", text: n.name, title: n.name, onclick: () => { S.selected = S.selected === n.id ? null : n.id; renderTree(); renderStage(); } });
       const tags = [];
       if (n.fx) tags.push(el("span", { class: "ltag style", text: "Layer Style", title: "layer นี้มี Layer Style" }));
-      const tag = n.kind === "text" ? "T" : n.kind === "empty" ? (n.adjustment ? "adj" : "ว่าง") : n.opacity < 1 ? Math.round(n.opacity * 100) + "%" : "";
+      const tag = n.kind === "text" ? "T" : n.kind === "empty" ? (n.adj ? adjName(n.adj) : "ว่าง") : n.opacity < 1 ? Math.round(n.opacity * 100) + "%" : "";
       if (tag) tags.push(el("span", { class: "ltag", text: tag }));
       if (n.kind === "group") {
         const up = mergedAncestor(n), on = !!n.merge || !!up;
@@ -864,7 +1068,7 @@ function renderTree() {
         mb.addEventListener("click", () => { n.merge = !n.merge; selectionChanged(); });
         tags.push(mb);
       }
-      const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (!usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
+      const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (!usable && !n.adj ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
         tw, cb, thumbFor(n), name, ...tags);
       li.append(row);
       if (n.kind === "group" && (n.expanded || q)) li.append(build(n.children, depth + 1));
@@ -898,6 +1102,10 @@ function renderOutInfo() {
     fxHint.replaceChildren(`Layer ที่เลือกมี Layer Style ${fxs.length} รายการ`);
     if (un.length) fxHint.append(el("ul", { class: "solist" }, ...un.map(n => el("li", { text: `${n.name}: ยังไม่รองรับ ${n.fxBad.join(", ")} ส่วนนี้จะไม่ติดไปด้วย` }))));
   }
+
+  // Adjustment layers that are switched on but cannot be applied yet
+  const badAdj = []; walk(d.nodes, n => { if (n.adj && n.checked && !adjSupported(n.adj)) badAdj.push(n); });
+  $("#adjHint").replaceChildren(...(badAdj.length ? [el("ul", { class: "solist" }, ...badAdj.map(n => el("li", { text: `${n.name}: ยังไม่รองรับ Adjustment แบบ ${adjName(n.adj)} ส่วนนี้จะไม่มีผล` })))] : []));
 
   // Smart Object: what happens to each checked Smart Object in "ตามต้นฉบับ"
   const sos = p.filter(i => !i.group).map(i => i.node).filter(n => n.so), hint = $("#soHint");
