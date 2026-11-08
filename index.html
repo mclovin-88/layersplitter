@@ -190,7 +190,9 @@ header .spacer{flex:1}
 .actions{display:grid;gap:9px}
 .progress{height:8px;border-radius:99px;border:var(--sw) solid var(--stroke);background:var(--panel);overflow:hidden}
 .progress i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
-.status{font-size:12.5px;color:var(--muted);min-height:1.5em}
+.statusbox{display:grid;gap:8px}
+.statusbox:has(.status:empty):has(.progress[hidden]){display:none}
+.status{font-size:12.5px;color:var(--muted);line-height:1.5}
 .status.ok{color:var(--ok)} .status.bad{color:var(--bad)}
 
 /* export preview */
@@ -232,6 +234,10 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
       <small>ไฟล์ไม่ถูกส่งออกจากเครื่อง ทุกอย่างประมวลผลในเบราว์เซอร์<br>ไฟล์ใหญ่หลาย GB ขึ้นกับหน่วยความจำของเครื่อง</small>
     </div>
     <div class="filelist" id="fileList"></div>
+    <div class="statusbox">
+      <div class="progress" id="prog" hidden><i></i></div>
+      <div class="status" id="status" role="status"></div>
+    </div>
     <div id="fileNote"></div>
     </div>
   </section>
@@ -307,8 +313,6 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
     <div class="actions">
       <button class="btn primary block" id="splitBtn" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg>Split Layers → ZIP</button>
       <button class="btn block" id="previewBtn" type="button">ดูตัวอย่างไฟล์ที่จะได้</button>
-      <div class="progress" id="prog" hidden><i></i></div>
-      <div class="status" id="status" role="status"></div>
     </div>
     </div>
   </section>
