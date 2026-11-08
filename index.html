@@ -11,6 +11,7 @@
   --accent:#5b4bd6; --accent-ink:#ffffff; --accent-soft:#ece9fc; --hover:#f1effa;
   --warn:#a35a00; --warn-bg:#fff4e2; --bad:#b4233a; --ok:#1d7a4f;
   --check:#e9e7f2; --check-2:#ffffff;
+  --alert:#f25c05; --alert-bg:#fff0e5;   /* limitation warnings: text, badges and preview highlight share this */
   --font-ui:"IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",sans-serif;
   --font-data:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   --r:10px;
@@ -19,12 +20,12 @@
   --bg:#13121a; --panel:#1c1a26; --line:#2f2c3d; --fg:#ecebf3; --muted:#a3a0b8;
   --accent:#8f82ff; --accent-ink:#14121c; --accent-soft:#2a2645; --hover:#252233;
   --warn:#f0b35a; --warn-bg:#33270f; --bad:#ff7a8e; --ok:#5fd39b;
-  --check:#26232f; --check-2:#1f1d28; color-scheme:dark}}
+  --check:#26232f; --check-2:#1f1d28; --alert:#ff8a3d; --alert-bg:#3a2210; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#13121a; --panel:#1c1a26; --line:#2f2c3d; --fg:#ecebf3; --muted:#a3a0b8;
   --accent:#8f82ff; --accent-ink:#14121c; --accent-soft:#2a2645; --hover:#252233;
   --warn:#f0b35a; --warn-bg:#33270f; --bad:#ff7a8e; --ok:#5fd39b;
-  --check:#26232f; --check-2:#1f1d28; color-scheme:dark}
+  --check:#26232f; --check-2:#1f1d28; --alert:#ff8a3d; --alert-bg:#3a2210; color-scheme:dark}
 
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -175,23 +176,21 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
 .card .fn{font:600 13px var(--font-data)}
 .card .ln,.card .dim{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card .dim{font-family:var(--font-data)}
-.card .sonote{font-size:11px;line-height:1.4;color:var(--warn);background:var(--warn-bg);border-radius:4px;padding:3px 5px;margin-top:3px}
-.ltag.so{color:var(--accent);background:var(--accent-soft);border-radius:4px;padding:1px 4px}
-.ltag.fx{font-style:italic}
-.ltag.warn{color:var(--warn)}
+.card .sonote{font-size:11px;line-height:1.4;color:var(--alert);background:var(--alert-bg);border-radius:4px;padding:3px 5px;margin-top:3px;font-weight:500}
+.ltag.style{font-family:var(--font-ui);font-size:10.5px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.hl.alert{border:2px solid var(--alert);background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:none}
+.hl.alert span{background:var(--alert);color:#fff;font-weight:600}
 .note{position:relative}
 .note .close{position:absolute;top:6px;right:6px;border:0;background:none;color:inherit;cursor:pointer;opacity:.7;padding:2px 5px;border-radius:4px}
 .note .close:hover{opacity:1;background:rgb(0 0 0 / .06)}
-.solist{margin:4px 0 0;padding-left:16px;font-size:12px;line-height:1.5;color:var(--warn)}
+.solist{margin:4px 0 0;padding-left:16px;font-size:12px;line-height:1.5;color:var(--alert);font-weight:500}
 .foot{text-align:center;color:var(--muted);font-size:12px;margin:18px auto 0;max-width:1500px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
 <header class="top">
   <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/><path d="m2 17.5 10 5 10-5" opacity=".6"/></svg></div>
-  <div><h1>Layer Splitter</h1><p>แยก layer จากไฟล์ .psd / .psb เป็น PNG ทีละไฟล์</p></div>
-  <div class="spacer"></div>
-  <button class="btn" id="addBtn" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>เพิ่มไฟล์</button>
+  <div><h1>Layer Splitter</h1></div>
   <input type="file" id="fileInput" accept=".psd,.psb,.ai" multiple hidden>
 </header>
 
@@ -229,12 +228,8 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
   <!-- LAYERS -->
   <section class="panel" id="layers" aria-label="Layers">
     <div class="phead"><h2>Layers</h2><span class="count" id="layerCount">0 layers</span></div>
-    <div class="search"><input type="search" id="search" placeholder="ค้นหา layer" aria-label="ค้นหา layer"></div>
     <ul class="tree" id="tree" role="tree"></ul>
     <div class="tfoot">
-      <button class="btn ghost" id="selAll" type="button">เลือกทั้งหมด</button>
-      <button class="btn ghost" id="selNone" type="button">ไม่เลือกเลย</button>
-      <button class="btn ghost" id="selVisible" type="button">เฉพาะที่เปิดตา</button>
       <span class="sum" id="selSum"></span>
     </div>
   </section>
@@ -285,7 +280,6 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
     </div>
   </section>
 </main>
-<p class="foot">ได้ไฟล์ 1.png, 2.png… ทีละ layer เรียงจากบนสุดลงล่าง · ไฟล์ไม่ถูกอัปโหลดไปที่ไหน</p>
 
 <dialog id="dlg" aria-labelledby="dlgTitle">
   <div class="dhead"><h2 id="dlgTitle">ไฟล์ที่จะได้</h2><span class="count" id="dlgCount"></span><button class="btn" id="dlgClose" type="button">ปิด</button></div>
@@ -336,7 +330,7 @@ function sniff(data) {
 function soInfo(L) {
   const p = L.placedLayer; if (!p) return null;
   const f = currentLinked.find(x => x.id === p.id);
-  const info = { w: p.width || 0, h: p.height || 0, data: null, kind: "none", problem: null, note: null, canvas: null };
+  const info = { w: Math.round(p.width || 0), h: Math.round(p.height || 0), data: null, kind: "none", problem: null, note: null, canvas: null };
   if (!f || !f.data || !f.data.length) {
     info.problem = "เป็น Linked Smart Object (ลิงก์ไฟล์ภายนอก) ไม่มีไฟล์ต้นฉบับอยู่ในไฟล์นี้ ใช้ภาพตาม canvas แทน";
   } else {
@@ -616,7 +610,17 @@ function renderStage() {
   }
   const art = el("div", { class: "art" }); art.append(stageCanvas);
   const sel = S.selected && findNode(d, S.selected);
-  if (sel) { const b = nodeBounds(sel); if (b) { const hl = el("div", { class: "hl" }, el("span", { text: sel.name })); Object.assign(hl.style, { left: b.x / d.width * 100 + "%", top: b.y / d.height * 100 + "%", width: b.w / d.width * 100 + "%", height: b.h / d.height * 100 + "%" }); art.append(hl); } }
+  const box = (b, label, cls) => {
+    // clip to the canvas so layers that extend past the edge stay inside the preview
+    const x0 = Math.max(0, b.x), y0 = Math.max(0, b.y), x1 = Math.min(d.width, b.x + b.w), y1 = Math.min(d.height, b.y + b.h);
+    if (x1 <= x0 || y1 <= y0) return;
+    const hl = el("div", { class: cls }, el("span", { text: label }));
+    Object.assign(hl.style, { left: x0 / d.width * 100 + "%", top: y0 / d.height * 100 + "%", width: (x1 - x0) / d.width * 100 + "%", height: (y1 - y0) / d.height * 100 + "%" });
+    art.append(hl);
+  };
+  // layers that hit a Smart Object limitation, in the same colour as the warning text
+  if (settings().so === "original") walk(d.nodes, n => { if (n.so && n.checked && (n.so.problem || n.so.note)) { const b = nodeBounds(n); if (b) box(b, n.name, "hl alert"); } });
+  if (sel) { const b = nodeBounds(sel); if (b) box(b, sel.name, "hl"); }
   vp.replaceChildren(art);
   applyZoom();
 }
@@ -657,7 +661,7 @@ function thumbFor(n) {
 function renderTree() {
   const d = doc(), tree = $("#tree"); tree.replaceChildren();
   if (!d) { $("#layerCount").textContent = "0 layers"; $("#selSum").textContent = ""; return; }
-  const q = $("#search").value.trim().toLowerCase();
+  const q = "";
   const matches = n => !q || n.name.toLowerCase().includes(q) || (n.kind === "group" && n.children.some(matches));
   const build = (nodes, depth) => {
     const ul = depth ? el("ul", { role: "group" }) : document.createDocumentFragment();
@@ -675,8 +679,7 @@ function renderTree() {
       tw.addEventListener("click", () => { n.expanded = !n.expanded; renderTree(); });
       const name = el("span", { class: "lname", text: n.name, title: n.name, onclick: () => { S.selected = S.selected === n.id ? null : n.id; renderTree(); renderStage(); } });
       const tags = [];
-      if (n.so) tags.push(el("span", { class: "ltag so" + (n.so.problem ? " warn" : ""), text: n.so.w ? `SO ${n.so.w}×${n.so.h}` : "SO", title: n.so.problem || n.so.note || `Smart Object · ขนาดต้นฉบับ ${n.so.w}×${n.so.h} px` }));
-      if (n.fx) tags.push(el("span", { class: "ltag fx", text: "fx", title: "มี Layer Style ซึ่งจะไม่ถูก render" }));
+      if (n.fx) tags.push(el("span", { class: "ltag style", text: "Layer Style", title: "layer นี้มี Layer Style" }));
       const tag = n.kind === "text" ? "T" : n.kind === "empty" ? (n.adjustment ? "adj" : "ว่าง") : n.opacity < 1 ? Math.round(n.opacity * 100) + "%" : "";
       if (tag) tags.push(el("span", { class: "ltag", text: tag }));
       const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (effHidden(n) || !usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
@@ -801,19 +804,15 @@ $("#zIn").onclick = () => { S.fit = false; S.zoom = Math.min(4, S.zoom * 1.25); 
 $("#zOut").onclick = () => { S.fit = false; S.zoom = Math.max(0.05, S.zoom / 1.25); applyZoom(); };
 $("#zFit").onclick = () => { S.fit = true; applyZoom(); };
 window.addEventListener("resize", () => { if (S.fit) applyZoom(); });
-$("#browseBtn").onclick = $("#addBtn").onclick = () => $("#fileInput").click();
+$("#browseBtn").onclick = () => $("#fileInput").click();
 $("#fileInput").onchange = e => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) { dropSample(); addFiles(fs); } };
 const drop = $("#drop");
 ["dragenter", "dragover"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === document.documentElement) drop.classList.remove("over"); }));
 document.addEventListener("drop", e => { const fs = [...(e.dataTransfer && e.dataTransfer.files || [])]; if (fs.length) { dropSample(); addFiles(fs); } });
 function dropSample() { const i = S.docs.findIndex(d => d.sample); if (i >= 0) { S.docs.splice(i, 1); S.active = S.docs.length - 1; } }
-$("#search").oninput = renderTree;
-$("#selAll").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { if (n.kind !== "group") n.checked = hasContent(n); }); selectionChanged(); };
-$("#selNone").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { n.checked = false; }); selectionChanged(); };
-$("#selVisible").onclick = () => { const d = doc(); if (!d) return; setDefaultChecks(d); selectionChanged(); };
 ["dpi", "trim", "opacity"].forEach(id => $("#" + id).addEventListener("change", renderOutInfo));
-document.querySelectorAll("input[name=so]").forEach(r => r.addEventListener("change", renderOutInfo));
+document.querySelectorAll("input[name=so]").forEach(r => r.addEventListener("change", () => { renderOutInfo(); renderStage(); }));
 $("#transparent").addEventListener("change", () => { $("#bgRow").hidden = $("#transparent").checked; renderOutInfo(); });
 $("#splitBtn").onclick = doSplit;
 $("#previewBtn").onclick = doPreview;
