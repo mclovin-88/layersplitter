@@ -27,6 +27,7 @@
   --check:#26232f; --check-2:#1f1d28; color-scheme:dark}
 
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--font-ui);
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 24px}
 button,select,input{font:inherit;color:inherit}
@@ -167,12 +168,21 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
 .dhead .btn:last-child{margin-left:auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:16px 18px 20px}
 .card{border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
-.card .pic{aspect-ratio:1;display:grid;place-items:center;padding:8px;max-width:100%;
+.card .pic{position:relative;aspect-ratio:1;overflow:hidden;max-width:100%;
   background-color:var(--check-2);background-image:linear-gradient(45deg,var(--check) 25%,transparent 25%),linear-gradient(-45deg,var(--check) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,var(--check) 75%),linear-gradient(-45deg,transparent 75%,var(--check) 75%);background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0}
-.card img{max-width:100%;max-height:100%;object-fit:contain}
-.card .cap{padding:7px 9px;border-top:1px solid var(--line);display:grid;gap:1px}
-.card .fn{font:500 12px var(--font-data);word-break:break-all}
-.card .dim{font:11px var(--font-data);color:var(--muted)}
+.card img{position:absolute;inset:8px;width:calc(100% - 16px);height:calc(100% - 16px);object-fit:contain}
+.card .cap{padding:7px 9px;border-top:1px solid var(--line);display:grid;gap:2px;min-width:0;background:var(--panel)}
+.card .fn{font:600 13px var(--font-data)}
+.card .ln,.card .dim{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .dim{font-family:var(--font-data)}
+.card .sonote{font-size:11px;line-height:1.4;color:var(--warn);background:var(--warn-bg);border-radius:4px;padding:3px 5px;margin-top:3px}
+.ltag.so{color:var(--accent);background:var(--accent-soft);border-radius:4px;padding:1px 4px}
+.ltag.fx{font-style:italic}
+.ltag.warn{color:var(--warn)}
+.note{position:relative}
+.note .close{position:absolute;top:6px;right:6px;border:0;background:none;color:inherit;cursor:pointer;opacity:.7;padding:2px 5px;border-radius:4px}
+.note .close:hover{opacity:1;background:rgb(0 0 0 / .06)}
+.solist{margin:4px 0 0;padding-left:16px;font-size:12px;line-height:1.5;color:var(--warn)}
 .foot{text-align:center;color:var(--muted);font-size:12px;margin:18px auto 0;max-width:1500px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -234,14 +244,6 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
     <h2 style="font-size:14px">ตั้งค่า Export</h2>
 
     <div class="field">
-      <span class="lbl">แยกแบบ</span>
-      <div class="radios">
-        <label class="checkrow"><input type="radio" name="mode" value="all" id="modeAll" checked><span>ทุก layer<small>group กลายเป็นโฟลเดอร์ <code>N_ชื่อgroup/</code></small></span></label>
-        <label class="checkrow"><input type="radio" name="mode" value="top" id="modeTop"><span>เฉพาะชั้นบนสุด<small>group รวมเป็นภาพเดียว</small></span></label>
-      </div>
-    </div>
-
-    <div class="field">
       <label for="dpi">ความละเอียด (DPI)</label>
       <select id="dpi">
         <option value="orig">ตามไฟล์ต้นฉบับ</option>
@@ -252,11 +254,20 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
       <span class="hint" id="dpiHint"></span>
     </div>
 
+    <div class="field" id="soField">
+      <span class="lbl">ขนาด Smart Object</span>
+      <div class="radios">
+        <label class="checkrow"><input type="radio" name="so" value="canvas" id="soCanvas" checked><span>ตามที่เห็นใน canvas<small>ตัดเฉพาะส่วนที่อยู่ในกรอบงาน</small></span></label>
+        <label class="checkrow"><input type="radio" name="so" value="original" id="soOriginal"><span>ขนาดต้นฉบับ<small>ดึงภาพเต็มความละเอียดจากไฟล์ที่ฝังอยู่ใน Smart Object</small></span></label>
+      </div>
+      <div class="hint" id="soHint"></div>
+    </div>
+
     <div class="field">
       <span class="lbl">ภาพ</span>
       <label class="checkrow"><input type="checkbox" id="transparent" checked><span>พื้นหลังโปร่งใส</span></label>
       <div class="colorrow" id="bgRow" hidden><input type="color" id="bgColor" value="#ffffff" aria-label="สีพื้นหลัง"><span>สีพื้นหลัง</span></div>
-      <label class="checkrow"><input type="checkbox" id="trim" checked><span>ตัดขอบใสออก (Trim)<small>ปิดไว้ถ้าต้องการให้ทุกไฟล์ขนาดเท่า canvas และตำแหน่งตรงกันเวลาวางซ้อนใน After Effects</small></span></label>
+      <label class="checkrow"><input type="checkbox" id="trim" checked><span>ตัดขอบใสออก (Trim)<small>ปิดไว้ถ้าต้องการให้ทุกไฟล์ขนาดเท่า canvas</small></span></label>
       <label class="checkrow"><input type="checkbox" id="opacity" checked><span>ใช้ค่า Opacity ของ layer</span></label>
     </div>
 
@@ -274,7 +285,7 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
     </div>
   </section>
 </main>
-<p class="foot">ตั้งชื่อไฟล์ 1.png, 2.png… เรียงจาก layer บนสุดลงล่าง ตรงกับ script Export Layers to PNG v5</p>
+<p class="foot">ได้ไฟล์ 1.png, 2.png… ทีละ layer เรียงจากบนสุดลงล่าง · ไฟล์ไม่ถูกอัปโหลดไปที่ไหน</p>
 
 <dialog id="dlg" aria-labelledby="dlgTitle">
   <div class="dhead"><h2 id="dlgTitle">ไฟล์ที่จะได้</h2><span class="count" id="dlgCount"></span><button class="btn" id="dlgClose" type="button">ปิด</button></div>
@@ -310,6 +321,57 @@ if (window.claude && typeof window.claude.use === "function") {
 /* ---------- model ---------- */
 const BLEND = { "normal":"source-over","pass through":"source-over","multiply":"multiply","screen":"screen","overlay":"overlay","darken":"darken","lighten":"lighten","color dodge":"color-dodge","color burn":"color-burn","hard light":"hard-light","soft light":"soft-light","difference":"difference","exclusion":"exclusion","hue":"hue","saturation":"saturation","color":"color","luminosity":"luminosity","linear dodge":"lighter" };
 
+/* ---------- Smart Object ---------- */
+let currentLinked = [];   // psd.linkedFiles of the document being built
+function sniff(data) {
+  if (!data || data.length < 8) return "none";
+  const b = data;
+  if (b[0] === 0x38 && b[1] === 0x42 && b[2] === 0x50 && b[3] === 0x53) return "psd";       // 8BPS
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "png";
+  if (b[0] === 0xff && b[1] === 0xd8) return "jpg";
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "pdf";       // %PDF (.ai / .pdf)
+  if ((b[0] === 0x49 && b[1] === 0x49) || (b[0] === 0x4d && b[1] === 0x4d)) return "tif";
+  return "other";
+}
+function soInfo(L) {
+  const p = L.placedLayer; if (!p) return null;
+  const f = currentLinked.find(x => x.id === p.id);
+  const info = { w: p.width || 0, h: p.height || 0, data: null, kind: "none", problem: null, note: null, canvas: null };
+  if (!f || !f.data || !f.data.length) {
+    info.problem = "เป็น Linked Smart Object (ลิงก์ไฟล์ภายนอก) ไม่มีไฟล์ต้นฉบับอยู่ในไฟล์นี้ ใช้ภาพตาม canvas แทน";
+  } else {
+    info.data = f.data; info.kind = sniff(f.data);
+    if (info.kind === "pdf" || p.type === "vector") info.problem = "เป็น Smart Object แบบ vector (.ai / .pdf) ดึงขนาดต้นฉบับไม่ได้ ใช้ภาพตาม canvas แทน";
+    else if (info.kind === "tif" || info.kind === "other") info.problem = "ไฟล์ต้นฉบับใน Smart Object เป็นชนิดที่เบราว์เซอร์อ่านไม่ได้ ใช้ภาพตาม canvas แทน";
+  }
+  const t = p.transform || [];
+  if (t.length === 8) {
+    const straight = Math.abs(t[1] - t[3]) < 0.5 && Math.abs(t[2] - t[4]) < 0.5 && Math.abs(t[5] - t[7]) < 0.5 && Math.abs(t[6] - t[0]) < 0.5;
+    const flipped = t[2] < t[0] || t[7] < t[1];
+    const warped = p.warp && p.warp.style && p.warp.style !== "none";
+    if (!straight || flipped || warped) info.note = "Smart Object นี้ถูกหมุน พลิก หรือบิด ได้ภาพต้นฉบับก่อนแปลง";
+  }
+  return info;
+}
+async function soCanvas(n) {
+  const so = n.so;
+  if (so.canvas) return so.canvas;
+  if (so.kind === "psd") {
+    const inner = agPsd.readPsd(so.data, { skipThumbnail: true });
+    let c = inner.canvas;
+    if (!c || isBlank(c)) {
+      const saved = currentLinked; currentLinked = inner.linkedFiles || [];
+      c = compositeOf({ width: inner.width, height: inner.height, nodes: buildNodes(inner.children, null) });
+      currentLinked = saved;
+    }
+    so.canvas = c;
+  } else if (so.kind === "png" || so.kind === "jpg") {
+    const bmp = await createImageBitmap(new Blob([so.data]));
+    const c = makeCanvas(bmp.width, bmp.height); c.getContext("2d").drawImage(bmp, 0, 0); so.canvas = c;
+  } else throw new Error(so.problem || "อ่านไฟล์ต้นฉบับไม่ได้");
+  return so.canvas;
+}
+
 function buildNodes(children, parent) {
   // ag-psd lists children bottom→top; the UI and the numbering go top→bottom.
   const out = [];
@@ -322,7 +384,8 @@ function buildNodes(children, parent) {
       hidden: !!L.hidden, opacity: L.opacity == null ? 1 : L.opacity,
       blend: L.blendMode || "normal", left: L.left || 0, top: L.top || 0,
       canvas: L.canvas || null, adjustment: !!L.adjustment, clipping: !!L.clipping,
-      expanded: isGroup ? (L.opened !== false) : false, checked: false, children: []
+      expanded: isGroup ? (L.opened !== false) : false, checked: false, children: [],
+      so: isGroup ? null : soInfo(L), fx: !!(L.effects && !L.effects.disabled)
     };
     if (isGroup) n.children = buildNodes(L.children, n);
     out.push(n);
@@ -369,7 +432,7 @@ function settings() {
   const src = (d && d.dpi) || 72;
   const target = dpiSel === "orig" ? src : +dpiSel;
   return {
-    mode: document.querySelector('input[name=mode]:checked').value,
+    so: document.querySelector('input[name=so]:checked').value,
     scale: target / src, targetDpi: target, srcDpi: src,
     transparent: $("#transparent").checked, bg: $("#bgColor").value,
     trim: $("#trim").checked, useOpacity: $("#opacity").checked
@@ -390,30 +453,33 @@ function renderNode(d, n, st) {
     out = makeCanvas(b.w, b.h);
     out.getContext("2d").drawImage(full, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
   } else if (!alphaBounds(full)) return null;
+  return finish(out, st);
+}
+function finish(out, st) {
   if (!st.transparent) {
     const f = makeCanvas(out.width, out.height); const fc = f.getContext("2d");
     fc.fillStyle = st.bg; fc.fillRect(0, 0, f.width, f.height); fc.drawImage(out, 0, 0); out = f;
   }
   return out;
 }
+/* Smart Object at its embedded original resolution (DPI setting does not apply) */
+function renderSoOriginal(src, n, st) {
+  let out = makeCanvas(src.width, src.height);
+  const g = out.getContext("2d");
+  g.globalAlpha = st.useOpacity ? n.opacity : 1;
+  g.drawImage(src, 0, 0);
+  if (st.trim) {
+    const b = alphaBounds(out);
+    if (!b) return null;
+    if (b.w !== out.width || b.h !== out.height) { const c = makeCanvas(b.w, b.h); c.getContext("2d").drawImage(out, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h); out = c; }
+  }
+  return finish(out, st);
+}
 
-const safeName = s => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 60) || "Group";
-
-/* export plan: [{path, node}] in top→bottom order; numbering counts only what gets exported */
-function plan(d, st) {
-  const items = [];
-  const level = (nodes, prefix) => {
-    let k = 0;
-    for (const n of nodes) {
-      if (!leafChecked(n)) continue;
-      if (n.kind === "group" && st.mode === "all") {
-        k++; level(n.children, `${prefix}${k}_${safeName(n.name)}/`);
-      } else if (n.kind === "group" || n.kind === "layer" || n.kind === "text") {
-        k++; items.push({ path: `${prefix}${k}.png`, node: n });
-      }
-    }
-  };
-  level(d.nodes, "");
+/* export plan: every checked layer becomes its own file, top→bottom: 1.png, 2.png … (groups are not used) */
+function plan(d) {
+  const items = []; let k = 0;
+  walk(d.nodes, n => { if (n.kind !== "group" && n.checked && hasContent(n)) items.push({ path: `${++k}.png`, node: n }); });
   return items;
 }
 
@@ -422,6 +488,7 @@ function fmtBytes(b) { if (b < 1024) return b + " B"; if (b < 1048576) return (b
 const COLOR_MODE = ["Bitmap", "Grayscale", "Indexed", "RGB", "CMYK", "?", "?", "Multichannel", "Duotone", "Lab"];
 
 async function addFiles(list) {
+  $("#fileNote").replaceChildren();
   for (const f of list) {
     const ext = (f.name.split(".").pop() || "").toLowerCase();
     if (ext === "ai") { showAiNote(f.name); continue; }
@@ -445,14 +512,18 @@ function fromPsd(psd, name, size, ext) {
   const ri = psd.imageResources && psd.imageResources.resolutionInfo;
   let dpi = ri ? ri.horizontalResolution : 72;
   if (ri && ri.horizontalResolutionUnit === "PPCM") dpi = dpi * 2.54;
+  currentLinked = psd.linkedFiles || [];
   const d = { name, size, ext, width: psd.width, height: psd.height, dpi: Math.round(dpi) || 72,
     colorMode: COLOR_MODE[psd.colorMode] || "?", bits: psd.bitsPerChannel || 8,
     composite: psd.canvas || null, nodes: buildNodes(psd.children, null), sample: false };
+  currentLinked = [];
   // files saved without "Maximize Compatibility" carry a blank composite: rebuild it from the layers
   if (!d.composite || isBlank(d.composite)) d.composite = compositeOf(d);
   setDefaultChecks(d);
+  d.defaultKey = checkKey(d);
   return d;
 }
+function checkKey(d) { const ids = []; walk(d.nodes, n => { if (n.checked) ids.push(n.id); }); return ids.join(","); }
 function isBlank(c) {
   const t = makeCanvas(24, 24), g = t.getContext("2d"); g.drawImage(c, 0, 0, 24, 24);
   const p = g.getImageData(0, 0, 24, 24).data;
@@ -466,8 +537,9 @@ function compositeOf(d) {
 }
 function showAiNote(name) {
   const box = $("#fileNote"); box.replaceChildren(el("div", { class: "note warn" },
-    el("strong", { text: `${name}: ไฟล์ .ai แยก layer ในเบราว์เซอร์ไม่ได้` }), el("br"),
-    "ใน Illustrator ไปที่ File → Export → Export As… เลือก Photoshop (.psd) ติ๊ก Write Layers แล้วนำ .psd มาใช้ที่นี่ หรือใช้คำสั่ง /export-ai-layers ใน Claude Code"));
+    el("button", { class: "close", type: "button", "aria-label": "ปิดข้อความ", text: "✕", onclick: () => box.replaceChildren() }),
+    el("strong", { text: `${name}: ไฟล์ .ai ยังแยก layer ไม่ได้` }), el("br"),
+    "ใน Illustrator ไปที่ File → Export → Export As… เลือก Photoshop (.psd) ติ๊ก Write Layers แล้วนำ .psd มาใช้ที่นี่"));
 }
 
 /* ---------- sample document (shown until the person opens a file) ---------- */
@@ -507,6 +579,7 @@ function sampleDoc() {
   const d = { name: "ตัวอย่าง_Serum_Post.psd", size: 0, ext: "psd", width: W, height: H, dpi: 72, colorMode: "RGB", bits: 8, composite: null, nodes: buildNodes(psdLike.children, null), sample: true };
   d.composite = compositeOf(d);
   setDefaultChecks(d);
+  d.defaultKey = checkKey(d);
   return d;
 }
 
@@ -532,9 +605,14 @@ let stageCanvas = null;
 function renderStage() {
   const vp = $("#viewport"), d = doc();
   if (!d) { vp.replaceChildren(el("div", { class: "empty-state" }, el("strong", { text: "ยังไม่มีไฟล์" }), "เลือกไฟล์ .psd หรือ .psb เพื่อเริ่ม")); $("#zVal").textContent = "—"; return; }
-  if (!stageCanvas || stageCanvas._doc !== d) {
-    stageCanvas = makeCanvas(d.width, d.height); stageCanvas._doc = d;
-    stageCanvas.getContext("2d").drawImage(d.composite, 0, 0, d.width, d.height);
+  // the preview follows the checkboxes: the file's own composite while the default selection is untouched,
+  // otherwise only the checked layers are painted
+  const key = checkKey(d);
+  if (!stageCanvas || stageCanvas._doc !== d || stageCanvas._key !== key) {
+    stageCanvas = makeCanvas(d.width, d.height); stageCanvas._doc = d; stageCanvas._key = key;
+    const g = stageCanvas.getContext("2d");
+    if (key === d.defaultKey) g.drawImage(d.composite, 0, 0, d.width, d.height);
+    else drawTree(g, d.nodes, 1, { respectHidden: false, onlyChecked: true, useOpacity: true, blend: true }, 1);
   }
   const art = el("div", { class: "art" }); art.append(stageCanvas);
   const sel = S.selected && findNode(d, S.selected);
@@ -557,13 +635,13 @@ function findNode(d, id) { let f = null; walk(d.nodes, n => { if (n.id === id) f
 function renderInfo() {
   const d = doc(), box = $("#info");
   if (!d) { box.replaceChildren(); return; }
-  let layers = 0, groups = 0, texts = 0, empties = 0, hidden = 0;
-  walk(d.nodes, n => { if (n.kind === "group") groups++; else { layers++; if (n.kind === "text") texts++; if (n.kind === "empty") empties++; } if (n.hidden) hidden++; });
+  let layers = 0, groups = 0, texts = 0, empties = 0, hidden = 0, sos = 0, fxs = 0;
+  walk(d.nodes, n => { if (n.kind === "group") groups++; else { layers++; if (n.kind === "text") texts++; if (n.kind === "empty") empties++; if (n.so) sos++; if (n.fx) fxs++; } if (n.hidden) hidden++; });
   const row = (k, v) => [el("dt", { text: k }), el("dd", { text: v })];
   box.replaceChildren(
-    el("dl", {}, row("ไฟล์", d.name), row("ขนาดไฟล์", d.sample ? "—" : fmtBytes(d.size)), row("Canvas", `${d.width} × ${d.height} px`), row("ความละเอียด", `${d.dpi} DPI`), row("โหมดสี", `${d.colorMode} · ${d.bits}-bit`), row("Layer", `${layers} (ข้อความ ${texts}, ว่าง/adjustment ${empties})`), row("Group", String(groups)), row("ปิดตาอยู่", String(hidden))),
+    el("dl", {}, row("ไฟล์", d.name), row("ขนาดไฟล์", d.sample ? "—" : fmtBytes(d.size)), row("Canvas", `${d.width} × ${d.height} px`), row("ความละเอียด", `${d.dpi} DPI`), row("โหมดสี", `${d.colorMode} · ${d.bits}-bit`), row("Layer", `${layers} (ข้อความ ${texts}, ว่าง/adjustment ${empties})`), row("Smart Object", String(sos)), row("มี Layer Style (fx)", String(fxs)), row("Group", String(groups)), row("ปิดตาอยู่", String(hidden))),
     el("h3", { text: "ข้อจำกัด" }),
-    el("ul", {}, el("li", { text: "Layer Style (เงา, stroke, glow) และ mask ไม่ถูก render ได้ภาพ pixel ของ layer อย่างเดียว" }), el("li", { text: "Adjustment layer และ layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
+    el("ul", {}, el("li", { text: "Layer Style (เงา, stroke, glow) และ mask ไม่ถูก render ได้ภาพ pixel ของ layer อย่างเดียว" }), el("li", { text: "Smart Object ขนาดต้นฉบับใช้ได้เฉพาะแบบ Embedded ที่เป็นภาพ (PSD/PSB/PNG/JPG) ไม่รองรับแบบ Linked และแบบ vector" }), el("li", { text: "Adjustment layer และ layer ว่างจะถูกข้าม" }), el("li", { text: "ข้อความใช้ภาพที่ Photoshop บันทึกไว้ในไฟล์ ไม่ได้ render ใหม่" }), el("li", { text: "ไฟล์ CMYK หรือ 16-bit จะถูกแปลงเป็น RGB 8-bit" }))
   );
 }
 
@@ -591,14 +669,18 @@ function renderTree() {
       if (n.kind === "group") { const all = []; walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) all.push(c.checked); }); cb.checked = all.length && all.every(Boolean); cb.indeterminate = !cb.checked && all.some(Boolean); }
       else cb.checked = n.checked;
       cb.disabled = !usable;
-      cb.addEventListener("change", () => { const v = cb.checked; if (n.kind === "group") walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) c.checked = v; }); else n.checked = v; renderTree(); renderOutInfo(); });
+      cb.addEventListener("change", () => { const v = cb.checked; if (n.kind === "group") walk(n.children, c => { if (c.kind !== "group" && hasContent(c)) c.checked = v; }); else n.checked = v; selectionChanged(); });
       const tw = el("button", { class: "twisty" + (n.kind === "group" ? "" : " none"), type: "button", "aria-label": n.expanded ? "ยุบ" : "ขยาย", "aria-expanded": String(n.expanded || !!q) });
       tw.innerHTML = ICON.chev;
       tw.addEventListener("click", () => { n.expanded = !n.expanded; renderTree(); });
       const name = el("span", { class: "lname", text: n.name, title: n.name, onclick: () => { S.selected = S.selected === n.id ? null : n.id; renderTree(); renderStage(); } });
+      const tags = [];
+      if (n.so) tags.push(el("span", { class: "ltag so" + (n.so.problem ? " warn" : ""), text: n.so.w ? `SO ${n.so.w}×${n.so.h}` : "SO", title: n.so.problem || n.so.note || `Smart Object · ขนาดต้นฉบับ ${n.so.w}×${n.so.h} px` }));
+      if (n.fx) tags.push(el("span", { class: "ltag fx", text: "fx", title: "มี Layer Style ซึ่งจะไม่ถูก render" }));
       const tag = n.kind === "text" ? "T" : n.kind === "empty" ? (n.adjustment ? "adj" : "ว่าง") : n.opacity < 1 ? Math.round(n.opacity * 100) + "%" : "";
+      if (tag) tags.push(el("span", { class: "ltag", text: tag }));
       const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (effHidden(n) || !usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
-        tw, cb, thumbFor(n), name, tag ? el("span", { class: "ltag", text: tag }) : null);
+        tw, cb, thumbFor(n), name, ...tags);
       if (n.hidden) { const e = el("span", { class: "eye", title: "ปิดตาอยู่ใน Photoshop" }); e.innerHTML = ICON.eyeOff; row.append(e); }
       li.append(row);
       if (n.kind === "group" && (n.expanded || q)) li.append(build(n.children, depth + 1));
@@ -618,12 +700,23 @@ function renderOutInfo() {
   if (!d) { $("#outInfo").textContent = "—"; $("#dpiHint").textContent = ""; return; }
   const W = Math.round(d.width * st.scale), H = Math.round(d.height * st.scale);
   $("#dpiHint").textContent = st.scale === 1 ? `ไฟล์ต้นฉบับ ${d.srcDpi || d.dpi} DPI · ${d.width}×${d.height} px` : `ขยาย ${st.scale.toFixed(2)}× จาก ${d.dpi} DPI → canvas ${W}×${H} px` + (st.scale > 1 ? " (ภาพอาจแตกถ้าต้นฉบับละเอียดไม่พอ)" : "");
-  const p = plan(d, st);
-  const folders = new Set(p.map(i => i.path.split("/").slice(0, -1).join("/")).filter(Boolean));
+  const p = plan(d);
   const zip = zipName(d);
-  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), `${p.length} ไฟล์ PNG` + (folders.size ? ` · ${folders.size} โฟลเดอร์` : ""), el("br"), st.trim ? "ขนาดตามเนื้อภาพ (trim)" : `ทุกไฟล์ ${W}×${H} px`);
+  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), `${p.length} ไฟล์ PNG (1.png – ${p.length}.png)`, el("br"), st.trim ? "ขนาดตามเนื้อภาพ (trim)" : `ทุกไฟล์ ${W}×${H} px`);
   $("#splitBtn").disabled = $("#previewBtn").disabled = !p.length;
+
+  // Smart Object section: what will happen to each checked Smart Object
+  const sos = p.map(i => i.node).filter(n => n.so);
+  const allSo = []; walk(d.nodes, n => { if (n.so) allSo.push(n); });
+  const hint = $("#soHint");
+  document.querySelectorAll("input[name=so]").forEach(r => { r.disabled = !allSo.length; });
+  if (!allSo.length) { hint.replaceChildren("ไฟล์นี้ไม่มี Smart Object"); return; }
+  if (st.so === "canvas") { hint.replaceChildren(`Smart Object ที่เลือก ${sos.length} รายการ จะใช้ภาพตามที่เห็นใน canvas`); return; }
+  const bad = sos.filter(n => n.so.problem), noted = sos.filter(n => !n.so.problem && n.so.note);
+  hint.replaceChildren(`Smart Object ที่เลือก ${sos.length} รายการ · ใช้ขนาดต้นฉบับได้ ${sos.length - bad.length}` + (bad.length ? ` · ใช้ไม่ได้ ${bad.length}` : "") + " (ค่า DPI ไม่มีผลกับขนาดต้นฉบับ)");
+  if (bad.length || noted.length) hint.append(el("ul", { class: "solist" }, ...bad.map(n => el("li", { text: `${n.name}: ${n.so.problem}` })), ...noted.map(n => el("li", { text: `${n.name}: ${n.so.note}` }))));
 }
+function selectionChanged() { renderTree(); renderStage(); renderOutInfo(); }
 const zipName = d => d.name.replace(/\.(psd|psb)$/i, "") + "_PNG_Export.zip";
 
 /* ---------- export ---------- */
@@ -633,10 +726,18 @@ const toBlob = c => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new
 let busy = false;
 
 async function renderPlan(onItem) {
-  const d = doc(), st = settings(), p = plan(d, st), out = [];
+  const d = doc(), st = settings(), p = plan(d), out = [];
   for (let i = 0; i < p.length; i++) {
-    const c = renderNode(d, p[i].node, st);
-    if (c) out.push({ path: p[i].path, canvas: c, node: p[i].node });
+    const n = p[i].node; let c = null, note = null;
+    if (st.so === "original" && n.so) {
+      if (n.so.problem) note = n.so.problem;
+      else {
+        try { c = renderSoOriginal(await soCanvas(n), n, st); note = n.so.note ? "ขนาดต้นฉบับ · " + n.so.note : "ขนาดต้นฉบับ"; }
+        catch (e) { console.error(e); note = "ดึงขนาดต้นฉบับไม่สำเร็จ ใช้ภาพตาม canvas แทน"; }
+      }
+    }
+    if (!c) c = renderNode(d, n, st);
+    if (c) out.push({ path: p[i].path, canvas: c, node: n, note });
     setProg((i + 1) / p.length);
     if (onItem) await onItem(i, p.length);
     if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
@@ -658,7 +759,8 @@ async function doSplit() {
     const name = zipName(d);
     if (!downloads && !window.claude) { // opened as a plain file (e.g. from Google Drive): normal browser download
       const a = el("a", { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); a.remove();
-      setStatus(`ดาวน์โหลด ${name} แล้ว · ${files.length} ไฟล์ · ${fmtBytes(blob.size)}`, "ok"); return;
+      const fb = files.filter(f => f.note && f.note.includes("แทน")).length;
+      setStatus(`ดาวน์โหลด ${name} แล้ว · ${files.length} ไฟล์ · ${fmtBytes(blob.size)}` + (fb ? ` · Smart Object ${fb} รายการใช้ขนาดต้นฉบับไม่ได้ (ดูเหตุผลใน "ดูตัวอย่างไฟล์ที่จะได้")` : ""), "ok"); return;
     }
     if (!downloads) { setStatus(`ได้ ${files.length} ไฟล์ (${fmtBytes(blob.size)}) แต่หน้านี้บันทึกไฟล์ไม่ได้ ลองเปิดใน claude.ai`, "bad"); return; }
     try { await downloads.save({ filename: name, data: blob }); setStatus(`บันทึก ${name} แล้ว · ${files.length} ไฟล์ · ${fmtBytes(blob.size)}`, "ok"); }
@@ -675,7 +777,13 @@ async function doPreview() {
     const grid = $("#dlgGrid"); grid.replaceChildren();
     for (const f of files) {
       const url = URL.createObjectURL(await toBlob(f.canvas));
-      grid.append(el("figure", { class: "card", style: "margin:0" }, el("div", { class: "pic" }, el("img", { src: url, alt: f.node.name, loading: "lazy" })), el("figcaption", { class: "cap" }, el("span", { class: "fn", text: f.path }), el("span", { class: "dim", text: `${f.node.name} · ${f.canvas.width}×${f.canvas.height}` }))));
+      grid.append(el("figure", { class: "card", style: "margin:0" },
+        el("div", { class: "pic" }, el("img", { src: url, alt: f.node.name, loading: "lazy" })),
+        el("figcaption", { class: "cap" },
+          el("span", { class: "fn", text: f.path }),
+          el("span", { class: "ln", text: f.node.name, title: f.node.name }),
+          el("span", { class: "dim", text: `${f.canvas.width}×${f.canvas.height} px` }),
+          f.note ? el("span", { class: "sonote", text: "Smart Object: " + f.note }) : null)));
     }
     $("#dlgCount").textContent = `${files.length} ไฟล์`;
     $("#dlg").showModal(); setStatus("");
@@ -701,11 +809,11 @@ const drop = $("#drop");
 document.addEventListener("drop", e => { const fs = [...(e.dataTransfer && e.dataTransfer.files || [])]; if (fs.length) { dropSample(); addFiles(fs); } });
 function dropSample() { const i = S.docs.findIndex(d => d.sample); if (i >= 0) { S.docs.splice(i, 1); S.active = S.docs.length - 1; } }
 $("#search").oninput = renderTree;
-$("#selAll").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { if (n.kind !== "group") n.checked = hasContent(n); }); renderTree(); renderOutInfo(); };
-$("#selNone").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { n.checked = false; }); renderTree(); renderOutInfo(); };
-$("#selVisible").onclick = () => { const d = doc(); if (!d) return; setDefaultChecks(d); renderTree(); renderOutInfo(); };
+$("#selAll").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { if (n.kind !== "group") n.checked = hasContent(n); }); selectionChanged(); };
+$("#selNone").onclick = () => { const d = doc(); if (!d) return; walk(d.nodes, n => { n.checked = false; }); selectionChanged(); };
+$("#selVisible").onclick = () => { const d = doc(); if (!d) return; setDefaultChecks(d); selectionChanged(); };
 ["dpi", "trim", "opacity"].forEach(id => $("#" + id).addEventListener("change", renderOutInfo));
-document.querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", renderOutInfo));
+document.querySelectorAll("input[name=so]").forEach(r => r.addEventListener("change", renderOutInfo));
 $("#transparent").addEventListener("change", () => { $("#bgRow").hidden = $("#transparent").checked; renderOutInfo(); });
 $("#splitBtn").onclick = doSplit;
 $("#previewBtn").onclick = doPreview;
