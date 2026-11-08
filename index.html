@@ -72,8 +72,8 @@ header .spacer{flex:1}
 /* panels read as sticky notes: outlined card, coloured head strip, white numbered badge */
 .panel{background:var(--panel);border:var(--sw) solid var(--stroke);border-radius:var(--r);min-width:0;overflow:hidden}
 .panel h2{font:600 15px/1.2 var(--font-display);margin:0;letter-spacing:-.005em}
-.phead{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:var(--sw) solid var(--stroke);min-height:52px;background:var(--panel)}
-.phead .count{margin-left:auto;color:var(--fg);opacity:.7;font:12px var(--font-data)}
+.phead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 12px;border-bottom:var(--sw) solid var(--stroke);min-height:52px;background:var(--panel)}
+.phead .count{margin-left:auto;white-space:nowrap;color:var(--fg);opacity:.7;font:12px var(--font-data)}
 .n-blue .phead{background:var(--n-blue)} .n-pink .phead{background:var(--n-pink)}
 .n-yellow .phead{background:var(--n-yellow)} .n-green .phead{background:var(--n-green)}
 .step{display:grid;place-items:center;min-width:32px;height:32px;padding:0 5px;border-radius:5px;background:var(--badge-bg);color:var(--badge-fg);border:var(--sw) solid var(--stroke);font:700 14px var(--font-display);flex:none;font-variant-numeric:tabular-nums}
@@ -112,7 +112,7 @@ header .spacer{flex:1}
 .tab:hover{color:var(--fg)}
 .tab[aria-selected="true"]{color:var(--fg);border-color:var(--stroke);background:var(--panel)}
 .ratio{font:500 11.5px var(--font-data);background:var(--chip-bg);color:var(--chip-fg);border-radius:5px;padding:3px 8px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.zoom{margin-left:auto;display:flex;align-items:center;gap:4px;font:12px var(--font-data)}
+.zoom{margin-left:auto;display:flex;align-items:center;gap:4px;font:12px var(--font-data);flex:none}
 .zoom button{width:28px;height:28px;border:var(--sw) solid var(--stroke);background:var(--panel);border-radius:6px;cursor:pointer;display:grid;place-items:center}
 .zoom button:hover{background:var(--hover)}
 .zoom output{min-width:46px;text-align:center}
@@ -133,11 +133,7 @@ header .spacer{flex:1}
 .info dd{margin:0;font-family:var(--font-data);font-size:13px;word-break:break-all}
 .info h3{font:600 14px var(--font-display);margin:22px 0 8px}
 .info ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
-/* empty canvas drawn as a wireframe placeholder */
 .empty-state{display:grid;gap:12px;justify-items:center;color:var(--muted);text-align:center;padding:24px}
-.empty-state .wire{width:min(220px,60vw);aspect-ratio:9/12;max-width:100%;position:relative;border:var(--sw) solid var(--stroke);border-radius:6px;background:var(--panel)}
-.empty-state .wire svg{position:absolute;inset:0;width:100%;height:100%;color:var(--stroke)}
-.empty-state .wire::after{content:"";position:absolute;right:-14px;bottom:18%;width:58%;height:34%;background:var(--accent);opacity:.9;mix-blend-mode:multiply}
 .empty-state strong{color:var(--fg);font:600 15px var(--font-display)}
 
 /* layers */
@@ -231,7 +227,6 @@ dialog::backdrop{background:rgb(8 14 28 / .55)}
     <div class="pbody">
     <div class="drop" id="drop">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5"/><path d="M12 12v8M8.5 15.5 12 12l3.5 3.5"/></svg>
-      <strong>ลากไฟล์ .psd หรือ .psb มาวางที่นี่</strong>
       <button class="btn primary" id="browseBtn" type="button">เลือกไฟล์</button>
       <small>ไฟล์ไม่ถูกส่งออกจากเครื่อง ทุกอย่างประมวลผลในเบราว์เซอร์<br>ไฟล์ใหญ่หลาย GB ขึ้นกับหน่วยความจำของเครื่อง</small>
     </div>
@@ -618,25 +613,20 @@ function renderSoOriginal(src, n, st) {
   return finish(out, st);
 }
 
-/* export plan: every checked layer becomes its own file, top→bottom: 1.png, 2.png … (groups are not used) */
-/* a group marked "รวม" becomes one file named after the group; its checked layers are merged */
+/* every file is numbered top→bottom and named after its layer, e.g. 01_TECNO.png;
+   a group marked "รวม" becomes one file (its checked layers merged) named after the group */
 function plan(d) {
-  const items = []; let k = 0;
+  const items = [];
   const go = nodes => { for (const n of nodes) {
-    if (n.kind === "group") { if (n.merge) { if (leafChecked(n)) items.push({ path: safeName(n.name) + ".png", node: n, group: true }); } else go(n.children); }
-    else if (n.checked && hasContent(n)) items.push({ path: `${++k}.png`, node: n });
+    if (n.kind === "group") { if (n.merge) { if (leafChecked(n)) items.push({ node: n, group: true }); } else go(n.children); }
+    else if (n.checked && hasContent(n)) items.push({ node: n });
   } };
   go(d.nodes);
-  // keep every file name unique (two groups with the same name, or a group called "3")
-  const used = new Set(items.filter(i => !i.group).map(i => i.path.toLowerCase()));
-  for (const it of items) if (it.group) {
-    const stem = it.path.slice(0, -4); let name = it.path, c = 2;
-    while (used.has(name.toLowerCase())) name = `${stem}_${c++}.png`;
-    it.path = name; used.add(name.toLowerCase());
-  }
+  const width = Math.max(2, String(items.length).length);
+  items.forEach((it, i) => { it.path = `${String(i + 1).padStart(width, "0")}_${safeName(it.node.name)}.png`; });
   return items;
 }
-const safeName = s => (s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^\.+/, "").trim() || "Group").slice(0, 120);
+const safeName = s => (s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^\.+/, "").trim() || "layer").slice(0, 120);
 function mergedAncestor(n) { for (let p = n.parent; p; p = p.parent) if (p.merge) return p; return null; }
 function groupLeaves(g) { const out = []; walk(g.children, c => { if (c.kind !== "group" && c.checked && hasContent(c)) out.push(c); }); return out; }
 const groupSos = g => groupLeaves(g).filter(c => c.so);
@@ -766,8 +756,7 @@ function renderStage() {
   const vp = $("#viewport"), d = doc();
   const chip = $("#ratioChip");
   if (!d) {
-    const wire = el("div", { class: "wire", "aria-hidden": "true" }); wire.innerHTML = '<svg viewBox="0 0 90 120" preserveAspectRatio="none" fill="none" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke"><path d="M0 0 90 120M90 0 0 120" vector-effect="non-scaling-stroke"/></svg>';
-    vp.replaceChildren(el("div", { class: "empty-state" }, wire, el("strong", { text: "ยังไม่มีไฟล์" }), "เลือกไฟล์ .psd หรือ .psb เพื่อเริ่ม"));
+    vp.replaceChildren(el("div", { class: "empty-state" }, el("strong", { text: "ยังไม่มีไฟล์" }), "เลือกไฟล์ .psd หรือ .psb เพื่อเริ่ม"));
     $("#zVal").textContent = "—"; chip.hidden = true; return;
   }
   chip.hidden = false; chip.textContent = `${d.width}×${d.height} · ${ratioOf(d.width, d.height)}`;
@@ -897,7 +886,7 @@ function renderOutInfo() {
   $("#dpiHint").textContent = st.scale === 1 ? `ไฟล์ต้นฉบับ ${d.srcDpi || d.dpi} DPI · ${d.width}×${d.height} px` : `ขยาย ${st.scale.toFixed(2)}× จาก ${d.dpi} DPI → canvas ${W}×${H} px` + (st.scale > 1 ? " (ภาพอาจแตกถ้าต้นฉบับละเอียดไม่พอ)" : "");
   const p = plan(d);
   const zip = zipName(d);
-  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), (() => { const nums = p.filter(i => !i.group).length, grps = p.length - nums; return `${p.length} ไฟล์ PNG` + (nums ? ` (1.png – ${nums}.png)` : "") + (grps ? ` · กรุ๊ปที่รวม ${grps}` : ""); })(), el("br"), st.trim ? "ขนาดตามเนื้อภาพ (ตัดขอบใส)" : `ทุกไฟล์ ${W}×${H} px`);
+  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), (() => { const grps = p.filter(i => i.group).length; return `${p.length} ไฟล์ PNG` + (grps ? ` · กรุ๊ปที่รวม ${grps}` : "") + (p.length ? ` · เช่น ${p[0].path}` : ""); })(), el("br"), st.trim ? "ขนาดตามเนื้อภาพ (ตัดขอบใส)" : `ทุกไฟล์ ${W}×${H} px`);
   $("#splitBtn").disabled = $("#previewBtn").disabled = !p.length;
 
   // Layer Style: styles that cannot be rendered yet
