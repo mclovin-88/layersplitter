@@ -449,13 +449,53 @@ function drawTree(ctx, nodes, scale, opts, alphaMul) {
     const cb = clipBase(n);
     if (cb && opts.respectHidden && effHidden(cb)) continue;   // hiding the base hides what is clipped to it
     const { img, off } = layerImage(n, opts);
+    const alpha = a * (cb && cb.kind !== "group" && opts.useOpacity ? cb.opacity : 1);   // a clipping stack shares the base's opacity
+    const dx = (n.left - off) * scale, dy = (n.top - off) * scale, dw = img.width * scale, dh = img.height * scale;
+    if (opts.blend && customBlend(n.blend)) { drawCustomBlend(ctx, img, dx, dy, dw, dh, alpha, n.blend); continue; }
     ctx.save();
-    ctx.globalAlpha = a * (cb && cb.kind !== "group" && opts.useOpacity ? cb.opacity : 1);   // a clipping stack shares the base's opacity
+    ctx.globalAlpha = alpha;
     ctx.globalCompositeOperation = opts.blend ? (BLEND[n.blend] || "source-over") : "source-over";
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(img, (n.left - off) * scale, (n.top - off) * scale, img.width * scale, img.height * scale);
+    ctx.drawImage(img, dx, dy, dw, dh);
     ctx.restore();
   }
+}
+
+/* ---------- blend modes the canvas lacks, done per pixel ---------- */
+const CB = (b, s) => b >= 1 ? 1 : s <= 0 ? 0 : 1 - Math.min(1, (1 - b) / s);   // colour burn
+const CD = (b, s) => b <= 0 ? 0 : s >= 1 ? 1 : Math.min(1, b / (1 - s));       // colour dodge
+const SEP_BLEND = {
+  "linear burn": (b, s) => Math.max(0, b + s - 1),
+  "vivid light": (b, s) => s <= .5 ? CB(b, 2 * s) : CD(b, 2 * s - 1),
+  "linear light": (b, s) => Math.min(1, Math.max(0, b + 2 * s - 1)),
+  "pin light": (b, s) => s <= .5 ? Math.min(b, 2 * s) : Math.max(b, 2 * s - 1),
+  "hard mix": (b, s) => b + s >= 1 ? 1 : 0,
+  "subtract": (b, s) => Math.max(0, b - s),
+  "divide": (b, s) => s <= 0 ? 1 : Math.min(1, b / s),
+};
+const PIX_BLEND = new Set(["lighter color", "darker color", "dissolve"]);
+const customBlend = m => !!SEP_BLEND[m] || PIX_BLEND.has(m);
+function drawCustomBlend(ctx, img, dx, dy, dw, dh, alpha, mode) {
+  const cw = ctx.canvas.width, ch = ctx.canvas.height;
+  const x0 = Math.max(0, Math.floor(dx)), y0 = Math.max(0, Math.floor(dy)), x1 = Math.min(cw, Math.ceil(dx + dw)), y1 = Math.min(ch, Math.ceil(dy + dh));
+  const w = x1 - x0, h = y1 - y0; if (w <= 0 || h <= 0) return;
+  const tmp = makeCanvas(w, h), tg = tmp.getContext("2d"); tg.imageSmoothingEnabled = true; tg.drawImage(img, dx - x0, dy - y0, dw, dh);
+  const S = tg.getImageData(0, 0, w, h).data, dstImg = ctx.getImageData(x0, y0, w, h), D = dstImg.data, f = SEP_BLEND[mode];
+  let seed = 1234567;   // stable noise so Dissolve looks the same on every redraw
+  for (let i = 0; i < S.length; i += 4) {
+    let sa = S[i + 3] / 255 * alpha; if (sa <= 0) continue;
+    if (mode === "dissolve") { seed = (seed * 1103515245 + 12345) & 0x7fffffff; if (seed / 0x7fffffff >= sa) continue; sa = 1; }
+    const ab = D[i + 3] / 255; let r = S[i], g = S[i + 1], b = S[i + 2];
+    if (ab > 0 && mode !== "dissolve") {
+      let br, bg, bb;
+      if (f) { br = f(D[i] / 255, r / 255) * 255; bg = f(D[i + 1] / 255, g / 255) * 255; bb = f(D[i + 2] / 255, b / 255) * 255; }
+      else { const ls = lum(r, g, b), ld = lum(D[i], D[i + 1], D[i + 2]); const pickSrc = mode === "lighter color" ? ls > ld : ls < ld; [br, bg, bb] = pickSrc ? [r, g, b] : [D[i], D[i + 1], D[i + 2]]; }
+      r = r * (1 - ab) + br * ab; g = g * (1 - ab) + bg * ab; b = b * (1 - ab) + bb * ab;
+    }
+    const oa = sa + ab * (1 - sa);
+    D[i] = (r * sa + D[i] * ab * (1 - sa)) / oa; D[i + 1] = (g * sa + D[i + 1] * ab * (1 - sa)) / oa; D[i + 2] = (b * sa + D[i + 2] * ab * (1 - sa)) / oa; D[i + 3] = oa * 255;
+  }
+  ctx.putImageData(dstImg, x0, y0);
 }
 
 /* ---------- Layer masks and clipping masks ---------- */
