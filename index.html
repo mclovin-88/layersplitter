@@ -393,9 +393,9 @@ async function soCanvas(n) {
     const inner = agPsd.readPsd(so.data, { skipThumbnail: true });
     let c = inner.canvas;
     if (!c || isBlank(c)) {
-      const saved = currentLinked; currentLinked = inner.linkedFiles || [];
+      const saved = [currentLinked, currentDocW, currentDocH]; currentLinked = inner.linkedFiles || []; currentDocW = inner.width; currentDocH = inner.height;
       c = compositeOf({ width: inner.width, height: inner.height, nodes: buildNodes(inner.children, null) });
-      currentLinked = saved;
+      [currentLinked, currentDocW, currentDocH] = saved;
     }
     so.canvas = c;
   } else if (so.kind === "png" || so.kind === "jpg") {
@@ -420,7 +420,7 @@ function buildNodes(children, parent) {
       adj: isGroup ? null : (L.adjustment || null), mask: L.mask || null,
       expanded: isGroup ? (L.opened !== false) : false, checked: false, children: [],
       so: isGroup ? null : soInfo(L), fx: false, effects: null, fxBad: [],
-      fill: L.fillOpacity == null ? 1 : L.fillOpacity, angle: currentAngle
+      fill: L.fillOpacity == null ? 1 : L.fillOpacity, angle: currentAngle, docW: currentDocW, docH: currentDocH
     };
     if (!isGroup && L.effects && !L.effects.disabled && fxAny(L.effects)) { n.fx = true; n.effects = L.effects; n.fxBad = fxUnsupported(L.effects); }
     if (isGroup) n.children = buildNodes(L.children, n);
@@ -446,21 +446,79 @@ function drawTree(ctx, nodes, scale, opts, alphaMul) {
     const a = alphaMul * (opts.useOpacity ? n.opacity : 1);
     if (n.kind === "group") { drawTree(ctx, n.children, scale, opts, a); continue; }
     if (!n.canvas || n.kind === "empty") continue;
-    let img = n.canvas, off = 0;
-    if (opts.fx && n.effects) { const f = nodeFx(n); if (f) { img = f.canvas; off = f.pad; } }
-    const adjs = adjFor(n, opts.adjOn || adjOnChecked);
-    if (adjs.length) {
-      const key = adjs.map(a => a.id).join(",") + (img === n.canvas ? "" : "|fx");
-      if (!n._adj || n._adj.key !== key) n._adj = { key, canvas: applyAdjustments(img, adjs, n.left - off, n.top - off, 1, 1) };
-      img = n._adj.canvas;
-    }
+    const cb = clipBase(n);
+    if (cb && opts.respectHidden && effHidden(cb)) continue;   // hiding the base hides what is clipped to it
+    const { img, off } = layerImage(n, opts);
     ctx.save();
-    ctx.globalAlpha = a;
+    ctx.globalAlpha = a * (cb && cb.kind !== "group" && opts.useOpacity ? cb.opacity : 1);   // a clipping stack shares the base's opacity
     ctx.globalCompositeOperation = opts.blend ? (BLEND[n.blend] || "source-over") : "source-over";
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, (n.left - off) * scale, (n.top - off) * scale, img.width * scale, img.height * scale);
     ctx.restore();
   }
+}
+
+/* ---------- Layer masks and clipping masks ---------- */
+let currentDocW = 0, currentDocH = 0;   // size of the document being built (a group used as a clipping base is drawn at this size)
+/* multiply an image's alpha by pixel masks; image pixel (x,y) sits at document (ox + x*sx, oy + y*sy) */
+function maskImage(img, masks, ox, oy, sx, sy) {
+  const W = img.width, H = img.height, out = makeCanvas(W, H), g = out.getContext("2d");
+  g.drawImage(img, 0, 0);
+  const id = g.getImageData(0, 0, W, H), px = id.data;
+  for (const m of masks) for (let y = 0; y < H; y++) {
+    const my = Math.floor(oy + (y + .5) * sy) - m.y;
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4; if (!px[i + 3]) continue;
+      const mx = Math.floor(ox + (x + .5) * sx) - m.x;
+      const v = mx >= 0 && my >= 0 && mx < m.w && my < m.h ? m.d[(my * m.w + mx) * 4] : m.def;
+      if (v < 255) px[i + 3] = px[i + 3] * v / 255;
+    }
+  }
+  g.putImageData(id, 0, 0);
+  return out;
+}
+/* the layer's own mask plus the masks of every group around it */
+const masksOf = n => { const out = []; for (let p = n; p; p = p.parent) { const m = maskData(p); if (m) out.push(m); } return out; };
+function maskedOf(n) {
+  if (n._masked === undefined) { const ms = masksOf(n); n._masked = ms.length && n.canvas ? maskImage(n.canvas, ms, n.left, n.top, 1, 1) : n.canvas; }
+  return n._masked;
+}
+/* a clipped layer is cut to the first non-clipped layer below it */
+function clipBase(n) {
+  if (!n.clipping) return null;
+  const s = n.sibs || [], k = s.indexOf(n); let j = k + 1;
+  while (j < s.length && s[j].clipping) j++;
+  const b = s[j]; return b && (b.kind === "group" || (b.canvas && b.kind !== "empty")) ? b : null;
+}
+function clipShape(b) {
+  if (!b._clip) {
+    if (b.kind === "group") { const c = makeCanvas(b.docW || currentDocW, b.docH || currentDocH); drawTree(c.getContext("2d"), b.children, 1, { respectHidden: true, useOpacity: true, blend: false, adjOn: () => false }, 1); b._clip = { c, x: 0, y: 0 }; }
+    else b._clip = { c: maskedOf(b), x: b.left, y: b.top };
+  }
+  return b._clip;
+}
+function clipTo(img, b, ox, oy, sx, sy) {
+  const sh = clipShape(b), W = img.width, H = img.height;
+  const m = makeCanvas(W, H), mg = m.getContext("2d");
+  mg.imageSmoothingEnabled = true; mg.drawImage(sh.c, (sh.x - ox) / sx, (sh.y - oy) / sy, sh.c.width / sx, sh.c.height / sy);
+  const out = makeCanvas(W, H), g = out.getContext("2d");
+  g.drawImage(img, 0, 0); g.globalCompositeOperation = "destination-in"; g.drawImage(m, 0, 0);
+  return out;
+}
+/* one layer, ready to paint: mask → Layer Style → adjustments above it → clipping */
+function layerImage(n, opts) {
+  const base = maskedOf(n); let img = base, off = 0;
+  if (opts.fx && n.effects) { const f = nodeFx(n); if (f) { img = f.canvas; off = f.pad; } }
+  const adjs = adjFor(n, opts.adjOn || adjOnChecked), cb = clipBase(n);
+  if (!adjs.length && !cb) return { img, off };
+  const key = adjs.map(a => a.id).join(",") + (img === base ? "" : "|fx") + (cb ? "|c" + cb.id : "");
+  if (!n._fin || n._fin.key !== key) {
+    let out = img;
+    if (adjs.length) out = applyAdjustments(out, adjs, n.left - off, n.top - off, 1, 1);
+    if (cb) out = clipTo(out, cb, n.left - off, n.top - off, 1, 1);
+    n._fin = { key, canvas: out };
+  }
+  return { img: n._fin.canvas, off };
 }
 
 /* ---------- Adjustment layers ---------- */
@@ -746,7 +804,7 @@ function applyFx(src, fx, k, angle, fill) {
   });
   return { canvas: out, pad };
 }
-function nodeFx(n) { if (n._fx === undefined) n._fx = applyFx(n.canvas, n.effects, 1, n.angle, n.fill); return n._fx; }
+function nodeFx(n) { if (n._fx === undefined) n._fx = applyFx(maskedOf(n), n.effects, 1, n.angle, n.fill); return n._fx; }
 function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
 
 function alphaBounds(c) {
@@ -794,18 +852,20 @@ function finish(out, st) {
 }
 /* Smart Object at its embedded original resolution (DPI setting does not apply) */
 function renderSoOriginal(src, n, st) {
+  const sx = n.canvas ? n.canvas.width / src.width : 1, sy = n.canvas ? n.canvas.height / src.height : 1;
+  const ms = masksOf(n); if (ms.length) src = maskImage(src, ms, n.left, n.top, sx, sy);
+  let pad = 0;
   if (st.fx && n.effects) {
     // effect sizes are in canvas pixels: scale them up to the original's resolution
     const k = n.so.dispW > 0 ? src.width / n.so.dispW : 1;
     const f = applyFx(src, n.effects, k, n.angle, n.fill);
-    if (f) src = f.canvas;
+    if (f) { src = f.canvas; pad = f.pad; }
   }
+  // the original's pixels map back onto the layer's place in the document for masks and clipping
+  const ox = n.left - pad * sx, oy = n.top - pad * sy;
   const adjs = adjFor(n, adjOnChecked);
-  if (adjs.length && n.canvas) {
-    // map the original's pixels back onto the layer's place in the document for adjustment masks
-    const sx = n.canvas.width / src.width, sy = n.canvas.height / src.height;
-    src = applyAdjustments(src, adjs, n.left, n.top, sx, sy);
-  }
+  if (adjs.length) src = applyAdjustments(src, adjs, ox, oy, sx, sy);
+  const cb = clipBase(n); if (cb) src = clipTo(src, cb, ox, oy, sx, sy);
   let out = makeCanvas(src.width, src.height);
   const g = out.getContext("2d");
   g.globalAlpha = st.useOpacity ? n.opacity : 1;
@@ -868,6 +928,7 @@ function fromPsd(psd, name, size, ext) {
   if (ri && ri.horizontalResolutionUnit === "PPCM") dpi = dpi * 2.54;
   currentLinked = psd.linkedFiles || [];
   currentAngle = psd.imageResources && psd.imageResources.globalAngle != null ? psd.imageResources.globalAngle : 30;
+  currentDocW = psd.width; currentDocH = psd.height;
   const d = { name, size, ext, width: psd.width, height: psd.height, dpi: Math.round(dpi) || 72,
     colorMode: COLOR_MODE[psd.colorMode] || "?", bits: psd.bitsPerChannel || 8,
     composite: psd.canvas || null, nodes: buildNodes(psd.children, null), sample: false };
@@ -899,7 +960,7 @@ function showAiNote(name) {
 
 /* ---------- sample document (shown until the person opens a file) ---------- */
 function sampleDoc() {
-  const W = 1080, H = 1080;
+  const W = 1080, H = 1080; currentDocW = W; currentDocH = H;
   const layer = (name, w, h, x, y, paint, extra = {}) => { const c = makeCanvas(w, h); paint(c.getContext("2d"), w, h); return Object.assign({ name, canvas: c, left: x, top: y }, extra); };
   const bg = layer("BG Gradient", W, H, 0, 0, (g, w, h) => { const gr = g.createLinearGradient(0, 0, w, h); gr.addColorStop(0, "#f1ecff"); gr.addColorStop(1, "#c9b8f2"); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
   const petals = layer("Petals", W, H, 0, 0, g => { const pts = [[120,170,38],[930,140,30],[980,520,44],[90,700,34],[300,950,28],[860,930,40],[700,90,22],[200,420,20]]; pts.forEach(([x,y,r],i) => { g.save(); g.translate(x,y); g.rotate(i*0.9); g.fillStyle = i%2 ? "#b49bea" : "#9a7fe0"; g.globalAlpha = .85; g.beginPath(); g.ellipse(0,0,r,r*.5,0,0,Math.PI*2); g.fill(); g.restore(); }); });
