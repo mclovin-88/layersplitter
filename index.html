@@ -177,6 +177,10 @@ dialog::backdrop{background:rgb(10 8 20 / .5)}
 .card .ln,.card .dim{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card .dim{font-family:var(--font-data)}
 .card .sonote{font-size:11px;line-height:1.4;color:var(--alert);background:var(--alert-bg);border-radius:4px;padding:3px 5px;margin-top:3px;font-weight:500}
+.mergebtn{flex:none;font:500 11px var(--font-ui);color:var(--muted);background:transparent;border:1px solid var(--line);border-radius:5px;padding:1px 7px;cursor:pointer}
+.mergebtn:not(.on):hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.mergebtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.mergebtn:disabled{cursor:default;opacity:.55}
 .ltag.style{font-family:var(--font-ui);font-size:10.5px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px}
 .hl.alert{border:2px solid var(--alert);background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:none}
 .hl.alert span{background:var(--alert);color:#fff;font-weight:600}
@@ -584,11 +588,28 @@ function renderSoOriginal(src, n, st) {
 }
 
 /* export plan: every checked layer becomes its own file, top→bottom: 1.png, 2.png … (groups are not used) */
+/* a group marked "รวม" becomes one file named after the group; its checked layers are merged */
 function plan(d) {
   const items = []; let k = 0;
-  walk(d.nodes, n => { if (n.kind !== "group" && n.checked && hasContent(n)) items.push({ path: `${++k}.png`, node: n }); });
+  const go = nodes => { for (const n of nodes) {
+    if (n.kind === "group") { if (n.merge) { if (leafChecked(n)) items.push({ path: safeName(n.name) + ".png", node: n, group: true }); } else go(n.children); }
+    else if (n.checked && hasContent(n)) items.push({ path: `${++k}.png`, node: n });
+  } };
+  go(d.nodes);
+  // keep every file name unique (two groups with the same name, or a group called "3")
+  const used = new Set(items.filter(i => !i.group).map(i => i.path.toLowerCase()));
+  for (const it of items) if (it.group) {
+    const stem = it.path.slice(0, -4); let name = it.path, c = 2;
+    while (used.has(name.toLowerCase())) name = `${stem}_${c++}.png`;
+    it.path = name; used.add(name.toLowerCase());
+  }
   return items;
 }
+const safeName = s => (s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^\.+/, "").trim() || "Group").slice(0, 120);
+function mergedAncestor(n) { for (let p = n.parent; p; p = p.parent) if (p.merge) return p; return null; }
+function groupLeaves(g) { const out = []; walk(g.children, c => { if (c.kind !== "group" && c.checked && hasContent(c)) out.push(c); }); return out; }
+const groupSos = g => groupLeaves(g).filter(c => c.so);
+const groupFxBad = g => [...new Set(groupLeaves(g).flatMap(c => c.fxBad))];
 
 /* ---------- file loading ---------- */
 function fmtBytes(b) { if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"; return (b / 1073741824).toFixed(2) + " GB"; }
@@ -736,7 +757,9 @@ function renderStage() {
   // only the clicked layer is outlined: orange (same as the warning text) when it hits a limitation
   if (sel) {
     const b = nodeBounds(sel);
-    const limited = (st.so === "original" && sel.so && (sel.so.problem || sel.so.note)) || (st.fx && sel.fxBad && sel.fxBad.length);
+    const merged = sel.kind === "group" && (sel.merge || mergedAncestor(sel));
+    const limited = (st.so === "original" && sel.so && (sel.so.problem || sel.so.note)) || (st.fx && sel.fxBad && sel.fxBad.length)
+      || (merged && ((st.so === "original" && groupSos(sel).length) || (st.fx && groupFxBad(sel).length)));
     if (b) box(b, sel.name, limited ? "hl alert" : "hl");
   }
   vp.replaceChildren(art);
@@ -800,6 +823,14 @@ function renderTree() {
       if (n.fx) tags.push(el("span", { class: "ltag style", text: "Layer Style", title: "layer นี้มี Layer Style" }));
       const tag = n.kind === "text" ? "T" : n.kind === "empty" ? (n.adjustment ? "adj" : "ว่าง") : n.opacity < 1 ? Math.round(n.opacity * 100) + "%" : "";
       if (tag) tags.push(el("span", { class: "ltag", text: tag }));
+      if (n.kind === "group") {
+        const up = mergedAncestor(n), on = !!n.merge || !!up;
+        const mb = el("button", { type: "button", class: "mergebtn" + (on ? " on" : ""), text: "รวม", "aria-pressed": String(!!n.merge),
+          title: up ? `รวมอยู่ในกรุ๊ป ${up.name} แล้ว` : n.merge ? "กรุ๊ปนี้จะรวมเป็น PNG ไฟล์เดียว (กดเพื่อยกเลิก)" : "รวมกรุ๊ปนี้เป็น PNG ไฟล์เดียว" });
+        mb.disabled = !!up || !usable;
+        mb.addEventListener("click", () => { n.merge = !n.merge; selectionChanged(); });
+        tags.push(mb);
+      }
       const row = el("div", { class: "row" + (S.selected === n.id ? " sel" : "") + (effHidden(n) || !usable ? " dim" : ""), style: `padding-left:${6 + depth * 16}px` },
         tw, cb, thumbFor(n), name, ...tags);
       if (n.hidden) { const e = el("span", { class: "eye", title: "ปิดตาอยู่ใน Photoshop" }); e.innerHTML = ICON.eyeOff; row.append(e); }
@@ -823,11 +854,12 @@ function renderOutInfo() {
   $("#dpiHint").textContent = st.scale === 1 ? `ไฟล์ต้นฉบับ ${d.srcDpi || d.dpi} DPI · ${d.width}×${d.height} px` : `ขยาย ${st.scale.toFixed(2)}× จาก ${d.dpi} DPI → canvas ${W}×${H} px` + (st.scale > 1 ? " (ภาพอาจแตกถ้าต้นฉบับละเอียดไม่พอ)" : "");
   const p = plan(d);
   const zip = zipName(d);
-  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), `${p.length} ไฟล์ PNG (1.png – ${p.length}.png)`, el("br"), st.trim ? "ขนาดตามเนื้อภาพ (ตัดขอบใส)" : `ทุกไฟล์ ${W}×${H} px`);
+  $("#outInfo").replaceChildren(el("b", { text: zip }), el("br"), (() => { const nums = p.filter(i => !i.group).length, grps = p.length - nums; return `${p.length} ไฟล์ PNG` + (nums ? ` (1.png – ${nums}.png)` : "") + (grps ? ` · กรุ๊ปที่รวม ${grps}` : ""); })(), el("br"), st.trim ? "ขนาดตามเนื้อภาพ (ตัดขอบใส)" : `ทุกไฟล์ ${W}×${H} px`);
   $("#splitBtn").disabled = $("#previewBtn").disabled = !p.length;
 
   // Layer Style: styles that cannot be rendered yet
-  const fxHint = $("#fxHint"), fxs = p.map(i => i.node).filter(n => n.fx);
+  const leaves = p.flatMap(i => i.group ? groupLeaves(i.node) : [i.node]);
+  const fxHint = $("#fxHint"), fxs = leaves.filter(n => n.fx);
   if (!st.fx || !fxs.length) fxHint.replaceChildren();
   else {
     const un = fxs.filter(n => n.fxBad.length);
@@ -836,11 +868,13 @@ function renderOutInfo() {
   }
 
   // Smart Object: what happens to each checked Smart Object in "ตามต้นฉบับ"
-  const sos = p.map(i => i.node).filter(n => n.so), hint = $("#soHint");
-  if (st.so === "canvas" || !sos.length) { hint.replaceChildren(); return; }
+  const sos = p.filter(i => !i.group).map(i => i.node).filter(n => n.so), hint = $("#soHint");
+  const inGroups = p.filter(i => i.group && groupSos(i.node).length);
+  if (st.so === "canvas" || (!sos.length && !inGroups.length)) { hint.replaceChildren(); return; }
+  if (!sos.length) { hint.replaceChildren(el("ul", { class: "solist" }, ...inGroups.map(i => el("li", { text: `กรุ๊ป ${i.node.name}: Smart Object ในกรุ๊ปที่รวมใช้ภาพตาม canvas` })))); return; }
   const bad = sos.filter(n => n.so.problem), noted = sos.filter(n => !n.so.problem && n.so.note);
   hint.replaceChildren(`Smart Object ที่เลือก ${sos.length} รายการ · ใช้ความละเอียดเต็มได้ ${sos.length - bad.length}` + (bad.length ? ` · ใช้ไม่ได้ ${bad.length}` : "") + " (ค่า DPI ไม่มีผลกับ Smart Object ที่ใช้ความละเอียดเต็ม)");
-  if (bad.length || noted.length) hint.append(el("ul", { class: "solist" }, ...bad.map(n => el("li", { text: `${n.name}: ${n.so.problem}` })), ...noted.map(n => el("li", { text: `${n.name}: ${n.so.note}` }))));
+  if (bad.length || noted.length || inGroups.length) hint.append(el("ul", { class: "solist" }, ...bad.map(n => el("li", { text: `${n.name}: ${n.so.problem}` })), ...noted.map(n => el("li", { text: `${n.name}: ${n.so.note}` })), ...inGroups.map(i => el("li", { text: `กรุ๊ป ${i.node.name}: Smart Object ในกรุ๊ปที่รวมใช้ภาพตาม canvas` }))));
 }
 function selectionChanged() { renderTree(); renderStage(); renderOutInfo(); }
 const zipName = d => d.name.replace(/\.(psd|psb)$/i, "") + "_PNG_Export.zip";
@@ -854,17 +888,19 @@ let busy = false;
 async function renderPlan(onItem) {
   const d = doc(), st = settings(), p = plan(d), out = [];
   for (let i = 0; i < p.length; i++) {
-    const n = p[i].node; let c = null, note = null;
+    const n = p[i].node, grp = !!p[i].group; let c = null, note = null;
     if (st.so === "original" && n.so) {
-      if (n.so.problem) note = n.so.problem;
+      if (n.so.problem) note = "Smart Object: " + n.so.problem;
       else {
-        try { c = renderSoOriginal(await soCanvas(n), n, st); note = n.so.note ? "ขนาดต้นฉบับ · " + n.so.note : "ขนาดต้นฉบับ"; }
-        catch (e) { console.error(e); note = "ดึงขนาดต้นฉบับไม่สำเร็จ ใช้ภาพตาม canvas แทน"; }
+        try { c = renderSoOriginal(await soCanvas(n), n, st); note = "Smart Object: ความละเอียดเต็ม" + (n.so.note ? " · " + n.so.note : ""); }
+        catch (e) { console.error(e); note = "Smart Object: ดึงความละเอียดเต็มไม่สำเร็จ ใช้ภาพตาม canvas แทน"; }
       }
     }
+    if (grp && st.so === "original" && groupSos(n).length) note = "Smart Object ในกรุ๊ปที่รวมใช้ภาพตาม canvas";
     if (!c) c = renderNode(d, n, st);
-    if (st.fx && n.fxBad.length) note = (note ? note + " · " : "") + "ยังไม่รองรับ " + n.fxBad.join(", ");
-    if (c) out.push({ path: p[i].path, canvas: c, node: n, note });
+    const bad = grp ? groupFxBad(n) : n.fxBad;
+    if (st.fx && bad.length) note = (note ? note + " · " : "") + "Layer Style ยังไม่รองรับ " + bad.join(", ");
+    if (c) out.push({ path: p[i].path, canvas: c, node: n, note, group: grp });
     setProg((i + 1) / p.length);
     if (onItem) await onItem(i, p.length);
     if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
@@ -908,9 +944,9 @@ async function doPreview() {
         el("div", { class: "pic" }, el("img", { src: url, alt: f.node.name, loading: "lazy" })),
         el("figcaption", { class: "cap" },
           el("span", { class: "fn", text: f.path }),
-          el("span", { class: "ln", text: f.node.name, title: f.node.name }),
+          el("span", { class: "ln", text: (f.group ? "กรุ๊ป · " : "") + f.node.name, title: f.node.name }),
           el("span", { class: "dim", text: `${f.canvas.width}×${f.canvas.height} px` }),
-          f.note ? el("span", { class: "sonote", text: "Smart Object: " + f.note }) : null)));
+          f.note ? el("span", { class: "sonote", text: f.note }) : null)));
     }
     $("#dlgCount").textContent = `${files.length} ไฟล์`;
     $("#dlg").showModal(); setStatus("");
