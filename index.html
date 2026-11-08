@@ -71,8 +71,8 @@ header .spacer{flex:1}
 
 /* panels read as sticky notes: outlined card, coloured head strip, white numbered badge */
 .panel{background:var(--panel);border:var(--sw) solid var(--stroke);border-radius:var(--r);min-width:0;overflow:hidden}
-.panel h2{font:600 15px/1.2 var(--font-display);margin:0;letter-spacing:-.005em}
-.phead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 12px;border-bottom:var(--sw) solid var(--stroke);min-height:52px;background:var(--panel)}
+.panel h2{font:600 15px/1.2 var(--font-display);margin:0;letter-spacing:-.005em;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.phead{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;padding:10px 10px;border-bottom:var(--sw) solid var(--stroke);min-height:52px;background:var(--panel)}
 .phead .count{margin-left:auto;white-space:nowrap;color:var(--fg);opacity:.7;font:12px var(--font-data)}
 .n-blue .phead{background:var(--n-blue)} .n-pink .phead{background:var(--n-pink)}
 .n-yellow .phead{background:var(--n-yellow)} .n-green .phead{background:var(--n-green)}
@@ -106,17 +106,18 @@ header .spacer{flex:1}
 .badge{display:inline-block;font:600 10.5px var(--font-data);letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--accent-soft);color:var(--accent)}
 
 /* stage */
-#stage{grid-area:stage;display:flex;flex-direction:column;min-height:440px}
-.tabs{display:flex;gap:4px}
-.tab{border:var(--sw) solid transparent;background:none;padding:5px 11px;border-radius:7px;cursor:pointer;color:var(--muted);font:500 14px var(--font-display)}
+#stage{grid-area:stage;display:flex;flex-direction:column;min-height:440px;container-type:inline-size}
+.tabs{display:flex;gap:2px;flex:none}
+.tab{border:var(--sw) solid transparent;background:none;padding:3px 9px;border-radius:7px;cursor:pointer;color:var(--muted);font:500 13px var(--font-display)}
 .tab:hover{color:var(--fg)}
 .tab[aria-selected="true"]{color:var(--fg);border-color:var(--stroke);background:var(--panel)}
-.ratio{font:500 11.5px var(--font-data);background:var(--chip-bg);color:var(--chip-fg);border-radius:5px;padding:3px 8px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.zoom{margin-left:auto;display:flex;align-items:center;gap:4px;font:12px var(--font-data);flex:none}
-.zoom button{width:28px;height:28px;border:var(--sw) solid var(--stroke);background:var(--panel);border-radius:6px;cursor:pointer;display:grid;place-items:center}
+.ratio{font:500 10.5px var(--font-data);background:var(--chip-bg);color:var(--chip-fg);border-radius:4px;padding:2px 6px;white-space:nowrap;font-variant-numeric:tabular-nums;flex:none}
+.zoom{margin-left:auto;display:flex;align-items:center;gap:3px;font:11.5px var(--font-data);flex:none}
+.zoom button{width:24px;height:24px;padding:0;border:var(--sw) solid var(--stroke);background:var(--panel);border-radius:6px;cursor:pointer;display:grid;place-items:center}
 .zoom button:hover{background:var(--hover)}
-.zoom output{min-width:46px;text-align:center}
-@media (max-width:520px){.ratio{display:none}}
+.zoom output{min-width:38px;text-align:center}
+/* the size chip gives way first when the preview panel is narrow, so the zoom controls stay on one line */
+@container (max-width:400px){.ratio{display:none!important}}
 .viewport{flex:1;overflow:auto;padding:22px;display:grid;place-items:center;min-height:380px;
   background-color:var(--check-2);
   background-image:linear-gradient(45deg,var(--check) 25%,transparent 25%),linear-gradient(-45deg,var(--check) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,var(--check) 75%),linear-gradient(-45deg,transparent 75%,var(--check) 75%);
@@ -793,7 +794,7 @@ function renderStage() {
 }
 function applyZoom() {
   const d = doc(); const art = $("#viewport .art"); if (!d || !art) return;
-  if (S.fit) { const vp = $("#viewport"); const aw = vp.clientWidth - 36, ah = Math.max(320, vp.clientHeight - 36); S.zoom = Math.min(aw / d.width, ah / d.height, 1); }
+  if (S.fit) { const vp = $("#viewport"); const aw = vp.clientWidth - 48, ah = Math.max(320, vp.clientHeight - 48); /* 22px padding + outline on each side */ S.zoom = Math.min(aw / d.width, ah / d.height, 1); }
   art.style.width = d.width * S.zoom + "px"; art.style.height = d.height * S.zoom + "px";
   $("#zVal").textContent = Math.round(S.zoom * 100) + "%";
 }
